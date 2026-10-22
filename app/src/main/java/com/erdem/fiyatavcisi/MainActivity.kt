@@ -73,7 +73,7 @@ class MainActivity : Activity() {
         var detailPage: String = "",
     )
 
-    private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, ACCESSORY, DIFFERENT_MODEL, OTHER }
+    private enum class Kind { MATCH, MUADIL, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, ACCESSORY, DIFFERENT_MODEL, OTHER }
 
     /** Ürün kimliği: ne yazılırsa yazılsın (barkod, ad, kod) aramanın dayandığı tek ürün */
     private data class Identity(
@@ -125,6 +125,10 @@ class MainActivity : Activity() {
     private var identity: Identity? = null
     private var userInput = ""
     private var resolvePhase = false
+    private var resolveType = ""     // barkod | kod | ad
+    private var resolveQuery = ""    // kimlik aranırken kullanılan yazı (barkoddan bulunan ad olabilir)
+    private var googleTried = false
+    private var googlePhase = false
     private var activeSites: List<Site> = emptyList()
     private val resolveLog = StringBuilder()
     private val prefs by lazy { getSharedPreferences("kimlik", Context.MODE_PRIVATE) }
@@ -243,6 +247,11 @@ class MainActivity : Activity() {
             'karakterleri girin','characters you see'];
           var hit = '';
           for (var w = 0; w < words.length; w++) { if (low.indexOf(words[w]) >= 0) { hit = words[w]; break; } }
+          // Site "bulunamadı" diyorsa altındaki öneri/popüler ürünleri sonuç sanma
+          var head = low.slice(0, 5000);
+          var nores = /sonuç bulunamadı|ürün bulunamadı|bulamadık|eşleşen (bir )?(ürün|sonuç) (bulunamadı|yok)|için sonuç yok|sonuç yok|(^|[^0-9])0 (ürün|sonuç)/.test(head);
+          if (nores) return JSON.stringify({ title: document.title, url: location.href, block: hit, noResults: true,
+            anchors: 0, links: document.querySelectorAll('a[href]').length, cards: [] });
 
           var all = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
           var anchors = all.filter(function(a){ return pat.test(a.href); });
@@ -285,9 +294,11 @@ class MainActivity : Activity() {
             var h = el.querySelector('h2,h3,h4'); if (h) cands.push(h.innerText || '');
             text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
             var title = '';
+            // Kargo, rozet, puan gibi satırlar ürün adı değildir
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden/i;
             cands.forEach(function(c){
               c = (c || '').replace(/\s+/g, ' ').trim();
-              if (c.length >= 10 && c.length <= 250 && c.length > title.length) title = c;
+              if (c.length >= 10 && c.length <= 250 && c.length > title.length && !notTitle.test(c)) title = c;
             });
             // Ad bulunamazsa linkin içindeki ürün adını kullan; resim açıklaması ("siyah zemin üzerinde...") en son çare
             if (!title) {
@@ -347,7 +358,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 13", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 14", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -438,6 +449,10 @@ class MainActivity : Activity() {
                 if (!running || extractScheduled) return
                 extractScheduled = true
                 val my = token
+                if (googlePhase) {
+                    handler.postDelayed({ if (my == token) googleExtract() }, 3000)
+                    return
+                }
                 if (detailPhase) {
                     handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 1500);", null) }, 2500)
                     handler.postDelayed({ if (my == token) detailExtract() }, 5000)
@@ -477,12 +492,17 @@ class MainActivity : Activity() {
         // Bu giriş için daha önce bir ürün seçildiyse sormadan onu kullan
         val saved = prefs.getString("q:" + norm(userInput), null)
         if (saved != null) {
+            resolveQuery = userInput
             identity = identityFromJson(saved)
             resolveLog.append("Kimlik hafızadan alındı.\n")
             startSearch()
             return
         }
         // 1. adım: kimlik bul
+        resolveType = inputType(userInput)
+        resolveQuery = userInput
+        googleTried = false
+        googlePhase = false
         resolvePhase = true
         activeSites = resolverSites
         query = userInput
@@ -496,7 +516,7 @@ class MainActivity : Activity() {
     private fun startSearch() {
         resolvePhase = false
         activeSites = sites
-        query = identity?.searchQuery ?: userInput
+        query = identity?.searchQuery ?: resolveQuery
         index = 0
         offers.clear()
         siteSummary.clear()
@@ -532,6 +552,12 @@ class MainActivity : Activity() {
                 null
             }
             val found = data?.optJSONArray("cards")?.length() ?: 0
+            if (data?.optBoolean("noResults") == true) {
+                collect(site.name, data)
+                index++
+                handler.postDelayed({ if (my == token) runNext() }, 600)
+                return@evaluateJavascript
+            }
             // Ürünler geç yüklenen sitelerde (ör. Teknosa) biraz daha kaydırıp 2 kez daha dene
             if (found == 0 && data != null && data.optInt("links") == 0 && attempt < 2) {
                 attempt++
@@ -576,6 +602,7 @@ class MainActivity : Activity() {
         val block = d?.optString("block").orEmpty()
         val verdict = when {
             d == null -> "AÇILMADI${if (loadError.isNotEmpty()) " ($loadError)" else ""}"
+            d?.optBoolean("noResults") == true -> "bu aramada sonuç yok (site \"bulunamadı\" dedi)"
             count == 0 && (block.isNotEmpty() || httpStatus == 403 || httpStatus == 429) -> "ENGEL ($block $httpStatus)".trim()
             count == 0 -> {
                 val links = d?.optJSONArray("sampleLinks")
@@ -619,18 +646,36 @@ class MainActivity : Activity() {
         return out
     }
 
-    /** Aramadaki zorunlu kelimeler; "pro 2" gibi sayıları önceki kelimeyle birleştirir */
-    private fun requiredWords(q: String): List<String> {
-        val tokens = q.split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
+    private val unitWords = setOf("adet", "li", "lı", "lu", "lü", "kg", "gr", "g", "ml", "lt", "l", "litre", "cl", "mm", "cm",
+        "paket", "kutu", "rulo", "yaprak", "parça")
+
+    /**
+     * Aramayı parçalar:
+     *  words = ürün türü/marka kelimeleri, hard = şart olan ölçüler ("no 6" -> no6, "pro 2" -> pro2).
+     *  "100 adet", "6 kg" gibi miktarlar şart değildir; birim fiyatla karşılaştırılır.
+     */
+    private fun querySpec(q: String): Pair<List<String>, List<String>> {
+        val tokens = q.split(Regex("[\\s:]+")).map { norm(it) }.filter { it.isNotEmpty() }
         val words = mutableListOf<String>()
+        val hard = mutableListOf<String>()
+        val qty = Regex("^[0-9]+(li|lı|lu|lü|adet|kg|gr|g|ml|lt|l)$")
         tokens.forEachIndexed { i, t ->
+            val next = tokens.getOrNull(i + 1)
+            val prev = tokens.getOrNull(i - 1)
+            val isNum = t.all { it.isDigit() }
             when {
-                t.all { it.isDigit() } && i > 0 -> words.add(tokens[i - 1] + t)
+                t in unitWords || qty.matches(t) -> {}
+                isNum && next != null && next in unitWords -> {}
+                isNum && (prev == "no" || prev == "numara") -> hard.add("no$t")
+                isNum && prev != null -> hard.add(prev + t)
                 t.length >= 3 -> words.add(t)
             }
         }
-        return words
+        return words to hard
     }
+
+    /** Aramadaki zorunlu kelimeler (tür kelimeleri + şart olan ölçüler) */
+    private fun requiredWords(q: String): List<String> = querySpec(q).let { it.first + it.second }
 
     private fun inputType(s: String): String {
         val c = s.replace(" ", "")
@@ -650,28 +695,97 @@ class MainActivity : Activity() {
     private fun finishResolve() {
         resolvePhase = false
         val cands = buildCandidates()
-        resolveLog.append("Giriş: ").append(userInput).append(" (").append(inputType(userInput)).append(")\n")
+        resolveLog.append("Tanıma: ").append(resolveQuery).append(" (").append(resolveType).append(")\n")
         siteSummary.forEach { resolveLog.append("  tanıma — ").append(it).append("\n") }
         cands.forEach {
             resolveLog.append("  aday: ").append(it.label).append(" · ").append(it.count).append(" ilan · ör: ")
                 .append(it.sample.take(70)).append("\n")
         }
         when {
+            // Barkod sitelerde yoksa ürünün adını Google'dan öğren
+            cands.isEmpty() && resolveType == "barkod" && !googleTried -> googleLookup()
             cands.isEmpty() -> {
-                resolveLog.append("Kimlik bulunamadı; yazılan kelimelerle arandı.\n")
+                resolveLog.append("Kimlik bulunamadı; \"").append(resolveQuery).append("\" ile arandı.\n")
                 startSearch()
             }
-            cands.size == 1 || (inputType(userInput) == "barkod" && cands[0].count >= 2 * cands[1].count) -> {
+            cands.size == 1 || (resolveType == "barkod" && cands[0].count >= 2 * cands[1].count) -> {
                 chooseIdentity(cands[0])
             }
             else -> showChooser(cands)
         }
     }
 
+    private val googleJs = """
+        (function(){
+          var t = [];
+          document.querySelectorAll('h3').forEach(function(h){ var s = (h.innerText || '').trim(); if (s.length > 5) t.push(s); });
+          return JSON.stringify({ titles: t.slice(0, 8), page: document.title });
+        })()
+    """.trimIndent()
+
+    private fun googleLookup() {
+        googleTried = true
+        googlePhase = true
+        token++
+        val my = token
+        extractScheduled = false
+        status.text = "Barkod sitelerde yok, ürünün adı Google'dan öğreniliyor…"
+        web.loadUrl("https://www.google.com/search?hl=tr&q=" + URLEncoder.encode(userInput.replace(" ", ""), "UTF-8"))
+        handler.postDelayed({ if (my == token) googleExtract() }, 20000)
+    }
+
+    private fun googleExtract() {
+        val my = ++token
+        web.evaluateJavascript(googleJs) { raw ->
+            if (my != token) return@evaluateJavascript
+            googlePhase = false
+            val titles = try {
+                val a = JSONObject(JSONTokener(raw).nextValue() as String).optJSONArray("titles")
+                (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            resolveLog.append("Google sonuçları:\n")
+            titles.take(5).forEach { resolveLog.append("  · ").append(it.take(90)).append("\n") }
+            val name = barcodeName(titles)
+            if (name.isEmpty()) {
+                resolveLog.append("Google'dan ürün adı çıkarılamadı.\n")
+                startSearch()
+                return@evaluateJavascript
+            }
+            resolveLog.append("Barkoddan bulunan ad: ").append(name).append("\n")
+            // Bulunan adla kimlik adımını tekrarla
+            resolveType = "ad"
+            resolveQuery = name
+            resolvePhase = true
+            activeSites = resolverSites
+            query = name
+            index = 0
+            offers.clear()
+            siteSummary.clear()
+            runNext()
+        }
+    }
+
+    /** Google başlıklarından ürün adı: site adı ve "fiyatı" gibi ekleri at, en sık geçen başlığı al */
+    private fun barcodeName(titles: List<String>): String {
+        val cleaned = titles.map { t ->
+            t.split(Regex("\\s[-|–—:]\\s")).first()
+                .replace(Regex("(?i)\\b(fiyatı|fiyatları|fiyat|en ucuz|satın al|barkod|ürün bilgisi)\\b"), " ")
+                .replace(Regex("[0-9]{8,14}"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+        }.filter { it.length >= 8 && it.any { c -> c.isLetter() } }
+        if (cleaned.isEmpty()) return ""
+        // İlk 3 kelimesi en çok tekrar eden başlık daha güvenilir
+        val key = { s: String -> s.lowercase(Locale("tr", "TR")).split(" ").take(3).joinToString(" ") }
+        val best = cleaned.groupingBy(key).eachCount().maxByOrNull { it.value }?.key
+        return (cleaned.firstOrNull { key(it) == best } ?: cleaned.first()).split(" ").take(8).joinToString(" ")
+    }
+
     private fun buildCandidates(): List<Identity> {
-        val type = inputType(userInput)
-        val need = requiredWords(userInput)
-        val inputCodes = codesIn(userInput).flatMap { listOf(it.first, it.second) }.toSet()
+        val type = resolveType
+        val need = requiredWords(resolveQuery)
+        val inputCodes = codesIn(resolveQuery).flatMap { listOf(it.first, it.second) }.toSet()
         val count = mutableMapOf<String, Int>()
         val baseOf = mutableMapOf<String, String>()
         val titles = mutableMapOf<String, MutableList<String>>()
@@ -768,7 +882,8 @@ class MainActivity : Activity() {
 
     // ---------- Eşleştirme ----------
 
-    private fun norm(s: String) = s.lowercase(Locale("tr", "TR")).replace(Regex("[^a-z0-9çğıöşü]"), "")
+    // Aynı şeyin farklı yazımları tek biçime iner (ataç = ataş)
+    private fun norm(s: String) = s.lowercase(Locale("tr", "TR")).replace("ataç", "ataş").replace(Regex("[^a-z0-9çğıöşü]"), "")
 
     private fun classify() {
         val id = identity
@@ -806,20 +921,14 @@ class MainActivity : Activity() {
         val tokens = query.lowercase(Locale("tr", "TR")).split(Regex("\\s+")).filter { it.isNotBlank() }
         // Model kodu: hem harf hem rakam içeren kelime (ör. qp2834)
         val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
-        val required = modelTokens.ifEmpty {
-            val words = mutableListOf<String>()
-            tokens.forEachIndexed { i, t ->
-                when {
-                    t.all { it.isDigit() } && i > 0 -> words.add(norm(tokens[i - 1] + t)) // "pro"+"2" -> "pro2"
-                    t.length >= 3 -> words.add(norm(t))
-                }
-            }
-            words
-        }
+        val required = modelTokens.ifEmpty { requiredWords(query) }
 
         val modelCode = Regex("\\b[a-z]{1,4}[0-9]{3,5}\\b")
         // Model kodu dışındaki kelimeler (ör. philips, oneblade): kodu yazmayan ilanları yakalamak için
         val otherWords = tokens.filter { t -> !(t.any { it.isDigit() } && t.any { it.isLetter() }) && t.length >= 3 }.map { norm(it) }
+        // Muadil: marka (ilk kelime) farklı olabilir; ölçü şartları ve ürün türü kelimelerinden en az biri tutmalı
+        val (specWords, specHard) = querySpec(query)
+        val typeWords = specWords.drop(1)
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
             val nt = norm(o.title)
@@ -827,6 +936,8 @@ class MainActivity : Activity() {
             o.kind = when {
                 isAccessory(t) -> Kind.ACCESSORY
                 required.isNotEmpty() && required.all { nt.contains(it) } -> Kind.MATCH
+                modelTokens.isEmpty() && typeWords.isNotEmpty() && specHard.all { nt.contains(it) } &&
+                    typeWords.any { nt.contains(it) } -> Kind.MUADIL
                 // Başlıkta başka bir model kodu varsa: aynı ailenin farklı modeli
                 modelTokens.isNotEmpty() && titleModels.isNotEmpty() -> {
                     o.otherModel = titleModels.first().uppercase()
@@ -886,6 +997,36 @@ class MainActivity : Activity() {
         return s.replace(".", "").replace(",", "").toDoubleOrNull() ?: 0.0
     }
 
+    /** Paket çarpanı: "x 6", "6 kutu", "6'lı paket" */
+    private fun packMultiplier(t: String): Double {
+        val m = Regex("x\\s*([0-9]+)|([0-9]+)\\s*(?:kutu|paket)|([0-9]+)\\s*'?\\s*l[ıiuü]\\s*paket").find(t) ?: return 1.0
+        return (m.groupValues[1].ifEmpty { m.groupValues[2] }.ifEmpty { m.groupValues[3] }).toDoubleOrNull() ?: 1.0
+    }
+
+    /** Birim fiyat: kg/litre/adet başına. Başlıkta miktar yoksa null */
+    private fun unitPrice(o: Offer): Pair<Double, String>? {
+        val t = o.title.lowercase(Locale("tr", "TR"))
+        Regex("([0-9]+(?:[.,][0-9]+)?)\\s*(kg|gr|g|ml|lt|l|litre)\\b").find(t)?.let { m ->
+            val v = m.groupValues[1].replace(",", ".").toDoubleOrNull() ?: 0.0
+            val (amount, unit) = when (m.groupValues[2]) {
+                "kg" -> v to "kg"
+                "gr", "g" -> v / 1000 to "kg"
+                "ml" -> v / 1000 to "L"
+                else -> v to "L"
+            }
+            if (amount > 0) return o.price / (amount * packMultiplier(t)) to unit
+        }
+        Regex("([0-9]+)\\s*(?:adet|'?\\s?l[iıuü]\\b)").find(t)?.let { m ->
+            val n = m.groupValues[1].toDoubleOrNull() ?: 0.0
+            if (n > 1) return o.price / (n * packMultiplier(t)) to "adet"
+        }
+        return null
+    }
+
+    private fun unitText(o: Offer): String = unitPrice(o)?.let { (v, u) ->
+        "≈ ${if (v < 10) tl.format(v) else tlWhole.format(v)} TL/$u"
+    } ?: ""
+
     private fun kindLabel(o: Offer) = when (o.kind) {
         Kind.ACCESSORY -> "aksesuar"
         Kind.DIFFERENT_MODEL -> "farklı model (${o.otherModel})"
@@ -894,6 +1035,7 @@ class MainActivity : Activity() {
         Kind.OTHER_PACKAGE -> "aynı modelin başka paketi (${o.otherModel})"
         Kind.SUSPICIOUS -> "çok ucuz — kılıf, taklit ya da yanlış ilan olabilir"
         Kind.MATCH -> "eşleşme"
+        Kind.MUADIL -> "muadil (aynı tür ve ölçü)"
     }
 
     // ---------- Ürün sayfaları: garanti ve satıcı ----------
@@ -1024,6 +1166,12 @@ class MainActivity : Activity() {
             sectionTitle("Eşleşen ürünler", green)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        val muadils = others.filter { it.kind == Kind.MUADIL }
+            .sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
+        if (muadils.isNotEmpty()) {
+            sectionTitle("Muadiller — aynı tür ve ölçü, birim fiyata göre", green)
+            muadils.forEach { offerRow(it, false) }
+        }
         val suspicious = others.filter { it.kind == Kind.SUSPICIOUS }
         if (suspicious.isNotEmpty()) {
             sectionTitle("Şüpheli ucuz ilanlar — gerçek ürünün yarısından ucuz", red)
@@ -1041,7 +1189,8 @@ class MainActivity : Activity() {
         }
         val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
         val rest = others.filter {
-            it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS && it.kind != Kind.OTHER_PACKAGE
+            it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS &&
+                it.kind != Kind.OTHER_PACKAGE && it.kind != Kind.MUADIL
         }
         if (diffModels.isNotEmpty()) {
             sectionTitle("Aynı aileden farklı modeller", orange)
@@ -1090,6 +1239,7 @@ class MainActivity : Activity() {
         if (o.listPrice > o.price) {
             card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
         }
+        unitText(o).takeIf { it.isNotEmpty() }?.let { card.addView(label(it, 12f, ink, true)) }
         card.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 13f, ink).apply { setPadding(0, dp(4), 0, 0) })
         val meta = buildString {
             if (o.rating.isNotEmpty()) append("Puan ${o.rating}")
@@ -1107,7 +1257,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 13\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 14\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")
@@ -1138,6 +1288,14 @@ class MainActivity : Activity() {
                 .append("  sayfa: ").append(o.detailPage.ifEmpty { "-" }).append("\n")
         }
 
+        report.append("\nMUADİLLER (birim fiyata göre)\n")
+        val mu = others.filter { it.kind == Kind.MUADIL }.sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
+        if (mu.isEmpty()) report.append("(yok)\n")
+        mu.forEach { o ->
+            report.append("- ").append(money(o.price)).append(" ").append(unitText(o)).append(" | ").append(o.site)
+                .append("\n  ").append(o.title).append("\n")
+        }
+
         report.append("\nŞÜPHELİ UCUZ İLANLAR\n")
         val susp = others.filter { it.kind == Kind.SUSPICIOUS }
         if (susp.isEmpty()) report.append("(yok)\n")
@@ -1151,7 +1309,7 @@ class MainActivity : Activity() {
         }
 
         report.append("\nAKSESUAR / FARKLI\n")
-        others.filter { it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }.take(20).forEach { o ->
+        others.filter { it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS && it.kind != Kind.MUADIL }.take(20).forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
                 .append(kindLabel(o)).append("\n  ").append(o.title).append("\n")
         }

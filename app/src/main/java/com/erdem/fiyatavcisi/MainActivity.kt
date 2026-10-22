@@ -81,6 +81,7 @@ class MainActivity : Activity() {
         val base: String,        // temel model: "qp2834", "mtjv3"
         val label: String,       // ekranda: "QP2834/31"
         val searchQuery: String, // sitelere sorulacak sabit arama: "Philips QP2834"
+        val family: String = "",  // aile adı: "Philips OneBlade 360"
         val sample: String = "",
         val count: Int = 0,
         val price: Double = 0.0,
@@ -346,7 +347,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 12", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 13", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -592,6 +593,13 @@ class MainActivity : Activity() {
 
     // ---------- Ürün kimliği ----------
 
+    private fun isAccessory(lowerTitle: String): Boolean {
+        val t = lowerTitle
+            .replace("kablosuz", " ")
+            .replace(Regex("[0-9]+\\s*(adet\\s*)?yedek (bıçak|başlık)"), " ") // "1 Yedek Bıçak" = kutudan çıkan yedek
+        return accessoryWords.any { t.contains(it) }
+    }
+
     private val appleCode = Regex("\\b([a-z0-9]{4,5})([a-z]{1,2})/a\\b")
     private val genericCode = Regex("\\b([a-z]{1,4}[0-9]{3,5})(?:\\s*/\\s*([0-9]{2,3}))?\\b")
 
@@ -671,7 +679,7 @@ class MainActivity : Activity() {
         val perSite = mutableMapOf<String, Int>()
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
-            if (accessoryWords.any { t.contains(it) }) continue
+            if (isAccessory(t)) continue
             val nt = norm(o.title)
             val codes = codesIn(o.title)
             val pick = when (type) {
@@ -707,6 +715,7 @@ class MainActivity : Activity() {
                     base = base,
                     label = code.uppercase(),
                     searchQuery = if (apple) fam else "$brand ${base.uppercase()}".trim(),
+                    family = fam.split(" ").take(3).joinToString(" "),
                     sample = titles[code].orEmpty().minByOrNull { it.length }.orEmpty(),
                     count = count[code] ?: 0,
                     price = prices[code].orEmpty().minOrNull() ?: 0.0,
@@ -740,12 +749,13 @@ class MainActivity : Activity() {
 
     private fun identityToJson(id: Identity) = JSONObject().apply {
         put("code", id.code); put("base", id.base); put("label", id.label)
-        put("q", id.searchQuery); put("sample", id.sample)
+        put("q", id.searchQuery); put("sample", id.sample); put("family", id.family)
     }.toString()
 
     private fun identityFromJson(s: String): Identity? = try {
         val j = JSONObject(s)
-        Identity(j.getString("code"), j.getString("base"), j.getString("label"), j.getString("q"), j.optString("sample"))
+        Identity(j.getString("code"), j.getString("base"), j.getString("label"), j.getString("q"),
+            family = j.optString("family"), sample = j.optString("sample"))
     } catch (e: Exception) {
         null
     }
@@ -768,14 +778,16 @@ class MainActivity : Activity() {
 
     /** Kimlikle eşleştirme: aynı paket kodu = eşleşme; aynı model başka paket = ayrı başlık */
     private fun classifyByIdentity(id: Identity) {
-        val nameWords = requiredWords(id.searchQuery).filter { it != id.base }
+        // Olası eşleşme için aile adının tamamı aranır ("philips" tek başına yetmez)
+        val nameWords = requiredWords(id.family.ifEmpty { id.searchQuery }).filter { it != id.base }
+            .takeIf { it.size >= 2 } ?: emptyList()
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
             val nt = norm(o.title)
             val codes = codesIn(o.title)
             val sameBase = codes.filter { it.second == id.base }
             o.kind = when {
-                accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
+                isAccessory(t) -> Kind.ACCESSORY
                 codes.any { it.first == id.code } -> { o.variant = id.label; Kind.MATCH }
                 sameBase.any { it.first != it.second } -> {
                     o.otherModel = sameBase.first { it.first != it.second }.first.uppercase()
@@ -813,7 +825,7 @@ class MainActivity : Activity() {
             val nt = norm(o.title)
             val titleModels = modelCode.findAll(t).map { it.value }.toSet()
             o.kind = when {
-                accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
+                isAccessory(t) -> Kind.ACCESSORY
                 required.isNotEmpty() && required.all { nt.contains(it) } -> Kind.MATCH
                 // Başlıkta başka bir model kodu varsa: aynı ailenin farklı modeli
                 modelTokens.isNotEmpty() && titleModels.isNotEmpty() -> {
@@ -921,6 +933,15 @@ class MainActivity : Activity() {
             if (my != token) return@evaluateJavascript
             try {
                 val d = JSONObject(JSONTokener(raw).nextValue() as String)
+                val broken = d.optString("page").contains("chrome-error") || d.optInt("len") < 1000
+                if (broken && detailAttempt < 2) {
+                    detailAttempt++
+                    status.text = "${o.site}: ürün sayfası açılamadı, yeniden deneniyor (${detailAttempt}. tekrar)…"
+                    extractScheduled = false
+                    web.loadUrl(o.link)
+                    handler.postDelayed({ if (my == token) detailExtract() }, 20000)
+                    return@evaluateJavascript
+                }
                 if (d.optInt("len") < 3000 && detailAttempt < 2) {
                     detailAttempt++
                     status.text = "${o.site}: ürün sayfası yükleniyor (${detailAttempt}. tekrar)…"
@@ -1086,7 +1107,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 12\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 13\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

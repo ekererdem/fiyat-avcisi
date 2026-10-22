@@ -66,6 +66,9 @@ class MainActivity : Activity() {
         var warrantyLine: String = "",
         var seller: String = "",
         var sellerLine: String = "",
+        var warrantyType: String = "",
+        var warrantyDuration: String = "",
+        var sellerScore: String = "",
     )
 
     private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -110,19 +113,44 @@ class MainActivity : Activity() {
         (function(){
           var t = document.body ? document.body.innerText : '';
           var lines = t.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
-          function around(re, n){
-            for (var i = 0; i < lines.length; i++) { if (re.test(lines[i])) return lines.slice(i, i + n).join(' | ').slice(0, 220); }
-            return '';
-          }
-          var m = t.match(/(ithalatçı firma garantili|ithalatçı garantili|resmi distribütör garantili|distribütör garantili|apple türkiye garantili|türkiye garantili|üretici garantili|marka garantili|uluslararası garanti)/i);
+          // Üst menü ve site linkleri satıcı adı sanılmasın
+          var junk = /satış yap|satıcı ol|mesajlarım|giriş yap|üye ol|kampanya|popüler|yardım|sipariş|sepet|favori/i;
+          function ctx(i, b, a){ return lines.slice(Math.max(0, i - b), i + a + 1).join(' | ').slice(0, 240); }
+
+          // Garanti: kesin ifade, "Garanti Tipi: ..." özelliği ve "Garanti Süresi: ..." özelliği
+          var wm = t.match(/(ithalatçı firma garantili|ithalatçı garantili|resmi distribütör garantili|distribütör garantili|apple türkiye garantili|türkiye garantili|üretici garantili|marka garantili|uluslararası garanti)/i);
+          var wt = t.match(/garanti tipi\s*:?\s*\|?\s*([^,|\n]{3,40})/i);
+          var wd = t.match(/garanti süresi\s*:?\s*\|?\s*([^,|\n]{1,20})/i);
+          var wl = '';
+          for (var q = 0; q < lines.length; q++) { if (/garanti (tipi|türü|süresi)|garantili/i.test(lines[q])) { wl = ctx(q, 0, 1); break; } }
+
+          // Satıcı: birkaç farklı yerleşimi sırayla dene
+          var seller = '', sline = '';
           var by = t.match(/bu ürün\s+([^\n]{2,40}?)\s+tarafından/i);
-          var sold = t.match(/(?:^|\n)\s*(?:satıcı|satan|mağaza)\s*:?\s*\n?\s*([^\n|]{2,40})/i);
-          return JSON.stringify({
-            w: m ? m[1] : '',
-            wl: around(/garanti tipi|garanti türü/i, 2) || around(/garanti/i, 2),
-            sl: around(/^(satıcı|satan|mağaza|gönderici)(?![a-zA-Zçğıöşü])/i, 3),
-            seller: by ? by[1] : (sold ? sold[1] : '')
-          });
+          if (by && !junk.test(by[1])) seller = by[1];
+          for (var i = 0; i < lines.length && !seller; i++) {
+            var L = lines[i];
+            var m1 = L.match(/^(?:satıcı|mağaza|satan)\s*:\s*(.{2,40})$/i);
+            if (m1 && !junk.test(m1[1])) { seller = m1[1]; sline = ctx(i, 1, 2); break; }
+            if (/^(?:gönderici\s*\/\s*satıcı|satıcı|satıcı adı|satan)$/i.test(L) && lines[i + 1] && !junk.test(lines[i + 1])) {
+              seller = lines[i + 1]; sline = ctx(i, 0, 3); break;
+            }
+            if (/^(?:mağazaya git|satıcıya git|mağazayı ziyaret et|satıcıya sor|mağazayı takip et|takip et)$/i.test(L) && i > 0) {
+              for (var k = i - 1; k >= Math.max(0, i - 3); k--) {
+                var c = lines[k];
+                if (c.length >= 2 && c.length <= 40 && !/^[\d.,\s]+$/.test(c) && !junk.test(c)) { seller = c; break; }
+              }
+              sline = ctx(i, 4, 1);
+              if (seller) break;
+            }
+          }
+          var sc = (sline.match(/(?:^|[\s|])((?:10|[0-9])[.,]\d)(?=[\s|]|$)/) || [])[1] || '';
+          var dbg = [];
+          for (var j = 0; j < lines.length && dbg.length < 3; j++) {
+            if (/mağazaya git|satıcı puanı|mağaza puanı|satıcıya sor|gönderici/i.test(lines[j])) dbg.push(ctx(j, 3, 1));
+          }
+          return JSON.stringify({ w: wm ? wm[1] : '', wt: wt ? wt[1].trim() : '', wd: wd ? wd[1].trim() : '',
+            seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 320) });
         })()
     """.trimIndent()
 
@@ -229,7 +257,8 @@ class MainActivity : Activity() {
           }
           return JSON.stringify({ title: document.title, url: location.href, block: hit,
             anchors: anchors.length, fallback: usedFallback, links: all.length,
-            sampleLinks: cards.length ? [] : sampleLinks, cards: cards });
+            sampleLinks: cards.length ? [] : sampleLinks, cards: cards,
+            pageSample: cards.length ? '' : (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 200) });
         })()
     """.trimIndent().replace("__PAT__", linkPattern)
 
@@ -268,7 +297,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 6", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 7", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -428,6 +457,14 @@ class MainActivity : Activity() {
             }
             val found = data?.optJSONArray("cards")?.length() ?: 0
             // Ürünler geç yüklenen sitelerde (ör. Teknosa) biraz daha kaydırıp 2 kez daha dene
+            if (found == 0 && data != null && data.optInt("links") == 0 && attempt < 2) {
+                attempt++
+                status.text = "${site.name}: sayfa boş geldi, yeniden yükleniyor (${attempt}. tekrar)…"
+                extractScheduled = false
+                web.reload()
+                handler.postDelayed({ if (my == token) extract() }, 25000)
+                return@evaluateJavascript
+            }
             if (found == 0 && data != null && attempt < 2) {
                 attempt++
                 status.text = "${site.name}: ürünler bekleniyor (${attempt}. tekrar)…"
@@ -468,7 +505,9 @@ class MainActivity : Activity() {
                 val links = d?.optJSONArray("sampleLinks")
                 val sample = (0 until (links?.length() ?: 0)).joinToString("\n    ") { links!!.optString(it) }
                 "ÜRÜN KARTI BULUNAMADI (ürün linki ${d?.optInt("anchors") ?: 0}, toplam link ${d?.optInt("links") ?: 0})" +
-                    if (sample.isNotEmpty()) "\n    Örnek linkler:\n    $sample" else ""
+                    (if (sample.isNotEmpty()) "\n    Örnek linkler:\n    $sample" else "") +
+                    "\n    Sayfa başlığı: ${d?.optString("title").orEmpty()}" +
+                    "\n    Sayfa metni: ${d?.optString("pageSample").orEmpty().ifEmpty { "(boş)" }}"
             }
             else -> "$count ürün okundu" + if (d?.optBoolean("fallback") == true) " (yedek yöntemle)" else ""
         }
@@ -607,6 +646,9 @@ class MainActivity : Activity() {
                 o.warrantyLine = d.optString("wl")
                 o.seller = d.optString("seller").trim()
                 o.sellerLine = d.optString("sl")
+                o.warrantyType = d.optString("wt")
+                o.warrantyDuration = d.optString("wd")
+                o.sellerScore = d.optString("score")
             } catch (e: Exception) {
             }
             o.detailChecked = true
@@ -618,11 +660,18 @@ class MainActivity : Activity() {
     /** Garanti yazısını renkli bir etikete çevirir */
     private fun warrantyBadge(o: Offer): Pair<String, Int>? {
         if (!o.detailChecked) return null
-        val w = o.warranty.lowercase(Locale("tr", "TR"))
+        val tr = Locale("tr", "TR")
+        val w = (o.warranty + " " + o.warrantyType).lowercase(tr)
+        val d = o.warrantyDuration.lowercase(tr)
+        // Türkiye'de yeni ürünlerde yasal asgari garanti 2 yıl; 1 yıl yazması ithal ürün işareti olabilir
+        val shortWarranty = Regex("^\\s*(1\\s*yıl|12\\s*ay|6\\s*ay)").containsMatchIn(d)
         return when {
             w.contains("ithalatçı") -> "İthalatçı garantili" to red
             w.contains("uluslararası") -> "Uluslararası garanti — Türkiye'de geçmeyebilir" to red
-            w.isNotEmpty() -> "Garanti: ${o.warranty}" to green
+            w.isNotBlank() -> "Garanti: ${o.warranty.ifEmpty { o.warrantyType }}" +
+                (if (d.isNotEmpty()) " · ${o.warrantyDuration}" else "") to green
+            shortWarranty -> "Garanti süresi ${o.warrantyDuration} — yasal asgari 2 yıl, ithal ürün olabilir" to orange
+            d.isNotEmpty() -> "Garanti süresi: ${o.warrantyDuration} (tipi yazmıyor)" to muted
             else -> "Garanti tipi sayfada bulunamadı" to muted
         }
     }
@@ -710,7 +759,8 @@ class MainActivity : Activity() {
         if (tag.isNotEmpty()) card.addView(label(tag, 12f, if (o.kind == Kind.MATCH) green else orange, true))
         if (o.origin.isNotEmpty()) card.addView(label(o.origin, 12f, if (o.origin.startsWith("Türkiye")) green else red, true))
         warrantyBadge(o)?.let { (txt, col) -> card.addView(label(txt, 12f, col, true)) }
-        if (o.seller.isNotEmpty()) card.addView(label("Satıcı: ${o.seller}", 12f, ink))
+        if (o.seller.isNotEmpty()) card.addView(label(
+            "Satıcı: ${o.seller}" + if (o.sellerScore.isNotEmpty()) " (puan ${o.sellerScore})" else "", 12f, ink))
         if (o.listPrice > o.price) {
             card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
         }
@@ -731,7 +781,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 6\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 7\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -744,8 +794,10 @@ class MainActivity : Activity() {
             report.append(" | ").append(o.site)
             if (o.variant.isNotEmpty()) report.append(" | paket ").append(o.variant)
             if (o.origin.isNotEmpty()) report.append(" | ").append(o.origin)
-            if (o.detailChecked) report.append(" | garanti: ").append(o.warranty.ifEmpty { "?" })
+            if (o.detailChecked) report.append(" | garanti: ").append(o.warranty.ifEmpty { o.warrantyType.ifEmpty { "?" } })
+                .append(" / süre: ").append(o.warrantyDuration.ifEmpty { "?" })
                 .append(" | satıcı: ").append(o.seller.ifEmpty { "?" })
+                .append(if (o.sellerScore.isNotEmpty()) " (${o.sellerScore})" else "")
             if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(countText(o.ratingCount)).append(")")
             report.append("\n  ").append(o.title).append("\n")
         }

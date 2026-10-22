@@ -125,9 +125,18 @@ class MainActivity : Activity() {
           function ctx(i, b, a){ return lines.slice(Math.max(0, i - b), i + a + 1).join(' | ').slice(0, 240); }
 
           // Garanti: kesin ifade, "Garanti Tipi: ..." özelliği ve "Garanti Süresi: ..." özelliği
-          var wm = t.match(/(ithalatçı firma garantili|ithalatçı garantili|resmi distribütör garantili|distribütör garantili|apple türkiye garantili|türkiye garantili|üretici garantili|marka garantili|uluslararası garanti)/i);
+          // Kesin garanti ifadesini sadece ürünün kendi başlığında ve "Garanti ..." özellik satırlarında ara.
+          // (Önerilen başka ürünlerin başlıkları ya da "Apple Türkiye garantili mi?" gibi sorular sayılmasın.)
+          var own = [];
+          var h1 = document.querySelector('h1'); if (h1) own.push(h1.innerText || '');
+          for (var g = 0; g < lines.length; g++) {
+            if (/^(garanti tipi|garanti türü|garanti bilgisi|garanti durumu|garanti)\s*:?/i.test(lines[g]) && lines[g].indexOf('?') < 0) {
+              own.push(lines[g]); if (lines[g + 1]) own.push(lines[g + 1]);
+            }
+          }
+          var wm = own.join('\n').match(/(ithalatçı firma garantili|ithalatçı garantili|resmi distribütör garantili|distribütör garantili|apple türkiye garantili|türkiye garantili|üretici garantili|marka garantili|uluslararası garanti)/i);
           var wt = t.match(/garanti tipi\s*:?\s*\|?\s*([^,|\n]{3,40})/i);
-          var wd = t.match(/garanti süresi\s*:?\s*\|?\s*([^,|\n]{1,20})/i);
+          var wd = t.match(/garanti süresi\s*:?\s*\|?\s*(\d+\s*(?:yıl|ay))/i);
           var wl = '';
           for (var q = 0; q < lines.length; q++) { if (/garanti (tipi|türü|süresi)|garantili/i.test(lines[q])) { wl = ctx(q, 0, 1); break; } }
 
@@ -305,7 +314,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 9", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 10", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -791,7 +800,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 9\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 10\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 

@@ -58,9 +58,11 @@ class MainActivity : Activity() {
         val link: String,
         val raw: String,
         var kind: Kind = Kind.OTHER,
+        var variant: String = "",
+        var otherModel: String = "",
     )
 
-    private enum class Kind { MATCH, ACCESSORY, OTHER }
+    private enum class Kind { MATCH, ACCESSORY, DIFFERENT_MODEL, OTHER }
 
     private val sites = listOf(
         Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
@@ -68,12 +70,12 @@ class MainActivity : Activity() {
         Site("Amazon", "/dp/") { "https://www.amazon.com.tr/s?k=$it" },
         Site("MediaMarkt", "/product/") { "https://www.mediamarkt.com.tr/tr/search.html?query=$it" },
         Site("Teknosa", "-p-[0-9]") { "https://www.teknosa.com/arama/?s=$it" },
-        Site("N11", "/urun/") { "https://www.n11.com/arama?q=$it" },
+        Site("N11", "urun[.]n11[.]com|n11[.]com/urun/") { "https://www.n11.com/arama?q=$it" },
     )
 
     // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
     private val accessoryWords = listOf(
-        "uyumlu", "yedek", "kablo", "kılıf", "kilif", "adaptör", "adaptor", "aparat",
+        "uyumlu", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor", "aparat",
         "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
     )
 
@@ -87,8 +89,12 @@ class MainActivity : Activity() {
 
     private val tl = NumberFormat.getNumberInstance(Locale("tr", "TR")).apply {
         maximumFractionDigits = 2
-        minimumFractionDigits = 0
+        minimumFractionDigits = 2
     }
+    private val tlWhole = NumberFormat.getNumberInstance(Locale("tr", "TR")).apply {
+        maximumFractionDigits = 0
+    }
+    private var attempt = 0
 
     private lateinit var input: EditText
     private lateinit var web: WebView
@@ -125,7 +131,8 @@ class MainActivity : Activity() {
             return t.replace(/\d+\s*[xX×]\s*(?:₺\s?)?[1-9][\d.,]*\s*(?:TL|₺)?/g, ' ')
               .replace(/aylık\s*(?:₺\s?)?[\d.,]+\s*(?:TL|₺)?/gi, ' ')
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*(?:kupon|indirim|parafpara|puan|üzeri|kazan)/gi, ' ')
-              .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ');
+              .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
+              .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*\s*(?:TL|₺)?/gi, ' ');
           }
           function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
 
@@ -136,8 +143,20 @@ class MainActivity : Activity() {
           var hit = '';
           for (var w = 0; w < words.length; w++) { if (low.indexOf(words[w]) >= 0) { hit = words[w]; break; } }
 
-          var anchors = Array.prototype.slice.call(document.querySelectorAll('a[href]'))
-            .filter(function(a){ return pat.test(a.href); });
+          var all = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
+          var anchors = all.filter(function(a){ return pat.test(a.href); });
+          var usedFallback = false;
+          if (!anchors.length) {
+            // Sitenin kalıbı tutmadıysa: sonu uzun bir ürün numarasıyla biten aynı-site linkleri dene
+            pat = /-[0-9]{6,}(?:[/?#]|$)|[-/][Pp][0-9]{5,}(?:[/?#]|$)/;
+            anchors = all.filter(function(a){ return a.host === location.host && pat.test(a.href); });
+            usedFallback = anchors.length > 0;
+          }
+          var sampleLinks = [];
+          all.forEach(function(a){
+            var tx = (a.innerText || '').trim();
+            if (sampleLinks.length < 8 && tx.length > 20 && sampleLinks.indexOf(a.href) < 0) sampleLinks.push(a.href.slice(0, 120));
+          });
           var seen = {}, cards = [];
           for (var i = 0; i < anchors.length && cards.length < 20; i++) {
             var a = anchors[i], key = keyOf(a.href);
@@ -149,7 +168,8 @@ class MainActivity : Activity() {
               for (var j = 0; j < inner.length; j++) {
                 if (pat.test(inner[j].href)) { var k = keyOf(inner[j].href); if (!keys[k]) { keys[k] = 1; n++; } }
               }
-              if (n > 1) break;
+              // Başka ürün içeriyorsa ya da sayfanın büyük kısmıysa kartın dışına çıktık demektir
+              if (n > 1 || (p.innerText || '').length > 1200) break;
               el = p;
             }
             var text = el.innerText || '';
@@ -171,13 +191,14 @@ class MainActivity : Activity() {
             });
 
             var rm = text.match(/(?:^|\s)([1-5][.,]\d)(?=\s|\()/);
-            var cm = text.match(/\((\d{1,3}(?:\.\d{3})+|\d{1,6})\)/);
+            var cm = text.match(/\((\d{1,3}(?:[.,]\d{1,3})?\s?B|\d{1,3}(?:\.\d{3})+|\d{1,6})\)/);
             cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
               raw: text.replace(/\s+/g, ' ').slice(0, 160) });
           }
           return JSON.stringify({ title: document.title, url: location.href, block: hit,
-            anchors: anchors.length, cards: cards });
+            anchors: anchors.length, fallback: usedFallback, links: all.length,
+            sampleLinks: cards.length ? [] : sampleLinks, cards: cards });
         })()
     """.trimIndent().replace("__PAT__", linkPattern)
 
@@ -216,7 +237,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 2", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 3", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -354,6 +375,7 @@ class MainActivity : Activity() {
         extractScheduled = false
         httpStatus = 0
         loadError = ""
+        attempt = 0
         status.text = "${index + 1}/${sites.size}: ${site.name} taranıyor…"
         val q = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
         web.loadUrl(site.url(q))
@@ -369,6 +391,15 @@ class MainActivity : Activity() {
                 JSONObject(JSONTokener(raw).nextValue() as String)
             } catch (e: Exception) {
                 null
+            }
+            val found = data?.optJSONArray("cards")?.length() ?: 0
+            // Ürünler geç yüklenen sitelerde (ör. Teknosa) biraz daha kaydırıp 2 kez daha dene
+            if (found == 0 && data != null && attempt < 2) {
+                attempt++
+                status.text = "${site.name}: ürünler bekleniyor (${attempt}. tekrar)…"
+                web.evaluateJavascript("window.scrollTo(0, ${3000 + attempt * 2500});", null)
+                handler.postDelayed({ if (my == token) extract() }, 3500)
+                return@evaluateJavascript
             }
             collect(site.name, data)
             index++
@@ -399,8 +430,13 @@ class MainActivity : Activity() {
         val verdict = when {
             d == null -> "AÇILMADI${if (loadError.isNotEmpty()) " ($loadError)" else ""}"
             count == 0 && (block.isNotEmpty() || httpStatus == 403 || httpStatus == 429) -> "ENGEL ($block $httpStatus)".trim()
-            count == 0 -> "ÜRÜN KARTI BULUNAMADI (ürün linki: ${d?.optInt("anchors") ?: 0})"
-            else -> "$count ürün okundu"
+            count == 0 -> {
+                val links = d?.optJSONArray("sampleLinks")
+                val sample = (0 until (links?.length() ?: 0)).joinToString("\n    ") { links!!.optString(it) }
+                "ÜRÜN KARTI BULUNAMADI (ürün linki ${d?.optInt("anchors") ?: 0}, toplam link ${d?.optInt("links") ?: 0})" +
+                    if (sample.isNotEmpty()) "\n    Örnek linkler:\n    $sample" else ""
+            }
+            else -> "$count ürün okundu" + if (d?.optBoolean("fallback") == true) " (yedek yöntemle)" else ""
         }
         siteSummary.add("$name: $verdict")
         status.text = "$name: $verdict"
@@ -416,13 +452,26 @@ class MainActivity : Activity() {
         val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
         val required = modelTokens.ifEmpty { tokens.filter { it.length >= 3 }.map { norm(it) } }
 
+        val modelCode = Regex("[a-z]{1,4}[0-9]{3,5}")
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
             val nt = norm(o.title)
+            val titleModels = modelCode.findAll(t.replace(" ", "")).map { it.value }.toSet()
             o.kind = when {
                 accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
                 required.isNotEmpty() && required.all { nt.contains(it) } -> Kind.MATCH
+                // Başlıkta başka bir model kodu varsa: aynı ailenin farklı modeli
+                modelTokens.isNotEmpty() && titleModels.isNotEmpty() -> {
+                    o.otherModel = titleModels.first().uppercase()
+                    Kind.DIFFERENT_MODEL
+                }
                 else -> Kind.OTHER
+            }
+            // Paket/varyant kodu: QP2834/31 gibi eğik çizgiden sonraki kısım
+            if (o.kind == Kind.MATCH) {
+                for (m in modelTokens) {
+                    Regex("$m\\s*/\\s*([0-9]{2,3})").find(t)?.let { o.variant = "${m.uppercase()}/${it.groupValues[1]}" }
+                }
             }
         }
         // Eşleşenlerin medyanının çok altında kalan "eşleşme" büyük ihtimalle aksesuardır
@@ -435,7 +484,22 @@ class MainActivity : Activity() {
 
     // ---------- Sonuç ekranı ----------
 
-    private fun money(v: Double) = "${tl.format(v)} TL"
+    private fun money(v: Double) =
+        "${if (v == Math.floor(v)) tlWhole.format(v) else tl.format(v)} TL"
+
+    /** "13,2 B" (bin) gibi yazımları sayıya çevirip okunur hale getirir */
+    private fun countText(s: String): String {
+        val b = Regex("([0-9]+(?:[.,][0-9]+)?)\\s?B").find(s) ?: return s
+        val v = b.groupValues[1].replace(",", ".").toDoubleOrNull() ?: return s
+        return tlWhole.format(v * 1000)
+    }
+
+    private fun kindLabel(o: Offer) = when (o.kind) {
+        Kind.ACCESSORY -> "aksesuar"
+        Kind.DIFFERENT_MODEL -> "farklı model (${o.otherModel})"
+        Kind.OTHER -> "farklı ürün"
+        Kind.MATCH -> "eşleşme"
+    }
 
     private fun showFinal() {
         classify()
@@ -455,12 +519,27 @@ class MainActivity : Activity() {
                     "Fark: en pahalısı ${money(top)} — ${money(top - cheapest)} daha fazla", 13f, muted
                 ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
             }
+            // Aynı model farklı paketlerle satılıyorsa uyar: kutu içeriği ve garanti farklı olabilir
+            val variants = matches.map { it.variant }.filter { it.isNotEmpty() }.distinct()
+            if (variants.size > 1) {
+                results.addView(label(
+                    "Dikkat: farklı paketler var (${variants.joinToString(", ")}). Kutu içeriği, garanti " +
+                        "ya da satıldığı ülke farklı olabilir; karşılaştırırken paket koduna bak.",
+                    13f, orange
+                ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
+            }
             sectionTitle("Eşleşen ürünler", green)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
-        if (others.isNotEmpty()) {
-            sectionTitle("Aksesuar / farklı ürün olabilir", orange)
-            others.forEach { offerRow(it, false) }
+        val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
+        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL }
+        if (diffModels.isNotEmpty()) {
+            sectionTitle("Aynı aileden farklı modeller", orange)
+            diffModels.forEach { offerRow(it, false) }
+        }
+        if (rest.isNotEmpty()) {
+            sectionTitle("Aksesuar / farklı ürün", muted)
+            rest.forEach { offerRow(it, false) }
         }
         sectionTitle("Site durumu", ink)
         siteSummary.forEach { results.addView(label("• $it", 13f, ink).apply { setPadding(dp(4), dp(2), dp(4), dp(2)) }) }
@@ -487,14 +566,20 @@ class MainActivity : Activity() {
             append("  ·  ").append(o.site)
             if (best) append("  ★ en ucuz")
         }
+        val tag = when {
+            o.kind == Kind.MATCH && o.variant.isNotEmpty() -> "Paket: ${o.variant}"
+            o.kind != Kind.MATCH -> kindLabel(o)
+            else -> ""
+        }
         card.addView(label(head, 16f, ink, true))
+        if (tag.isNotEmpty()) card.addView(label(tag, 12f, if (o.kind == Kind.MATCH) green else orange, true))
         if (o.listPrice > o.price) {
             card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
         }
         card.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 13f, ink).apply { setPadding(0, dp(4), 0, 0) })
         val meta = buildString {
             if (o.rating.isNotEmpty()) append("Puan ${o.rating}")
-            if (o.ratingCount.isNotEmpty()) append(" (${o.ratingCount})")
+            if (o.rating.isNotEmpty() && o.ratingCount.isNotEmpty()) append(" · ${countText(o.ratingCount)} değerlendirme")
             if (isEmpty()) append("Puan bilgisi okunamadı")
             append("  ·  dokun: sitede aç")
         }
@@ -508,7 +593,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 2\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 3\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -519,14 +604,15 @@ class MainActivity : Activity() {
             if (o.basket) report.append(" sepette")
             if (o.listPrice > o.price) report.append(" (liste ").append(money(o.listPrice)).append(")")
             report.append(" | ").append(o.site)
-            if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(o.ratingCount).append(")")
+            if (o.variant.isNotEmpty()) report.append(" | paket ").append(o.variant)
+            if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(countText(o.ratingCount)).append(")")
             report.append("\n  ").append(o.title).append("\n")
         }
 
         report.append("\nAKSESUAR / FARKLI\n")
         others.take(15).forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
-                .append(if (o.kind == Kind.ACCESSORY) "aksesuar" else "farklı").append("\n  ").append(o.title).append("\n")
+                .append(kindLabel(o)).append("\n  ").append(o.title).append("\n")
         }
 
         // Okuyucuyu iyileştirmem için: her siteden ilk 2 kartın ham metni

@@ -102,6 +102,7 @@ class MainActivity : Activity() {
     private val accessoryWords = listOf(
         "uyumlu", "kapak", "kulaklık ucu", "uçları", "askı", "temizleme", "kalemi", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
         "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
+        "replacement", "compatible", "blades", "blade kit", "charger", "cable", "case for",
     )
 
     private val gold = Color.parseColor("#C8961E")
@@ -129,6 +130,7 @@ class MainActivity : Activity() {
     private var detailPhase = false
     private val detailQueue = mutableListOf<Offer>()
     private var detailIndex = 0
+    private var detailAttempt = 0
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
     private val detailJs = """
@@ -188,6 +190,7 @@ class MainActivity : Activity() {
           }
           return JSON.stringify({ w: wm ? wm[1] : '', wt: wt ? wt[1].trim() : '', wd: wd ? wd[1].trim() : '',
             seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 320),
+            len: fullLen,
             page: document.title.slice(0, 80) + ' | metin ' + fullLen + ' karakter | ' + location.href.slice(0, 90) });
         })()
     """.trimIndent()
@@ -228,6 +231,7 @@ class MainActivity : Activity() {
               .replace(/aylık\s*(?:₺\s?)?[\d.,]+\s*(?:TL|₺)?/gi, ' ')
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*(?:kupon|indirim|parafpara|puan|üzeri|kazan)/gi, ' ')
               .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
+              .replace(/\([^)]*başına[^)]*\)/gi, ' ')
               .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*(?:\s*TL)?/gi, ' ');
           }
           function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
@@ -284,7 +288,14 @@ class MainActivity : Activity() {
               c = (c || '').replace(/\s+/g, ' ').trim();
               if (c.length >= 10 && c.length <= 250 && c.length > title.length) title = c;
             });
-            // Resim açıklaması (alt) bazen "siyah zemin üzerinde..." gibi tarif olur; sadece başka ad yoksa kullan
+            // Ad bulunamazsa linkin içindeki ürün adını kullan; resim açıklaması ("siyah zemin üzerinde...") en son çare
+            if (!title) {
+              try {
+                var seg = decodeURIComponent(a.pathname.split('/').filter(function(x){ return x; }).pop() || '');
+                seg = seg.replace(/\.html?/i, '').replace(/^_+/, '').replace(/-p(m)?-[A-Za-z0-9]+/, '').replace(/-[0-9]{5,}/, '').replace(/[-_]+/g, ' ').trim();
+                if (seg.length >= 10) title = seg;
+              } catch (e) {}
+            }
             if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
 
             var rm = text.match(/(?:^|\s)([1-4][.,]\d|5[.,]0)(?=\s|\()/);
@@ -335,7 +346,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 11", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 12", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -814,6 +825,9 @@ class MainActivity : Activity() {
                 else -> Kind.OTHER
             }
             // Paket/varyant kodu: QP2834/31 gibi eğik çizgiden sonraki kısım
+            if (o.kind == Kind.MATCH && modelTokens.isEmpty()) {
+                codesIn(o.title).firstOrNull()?.let { o.variant = it.first.uppercase() }
+            }
             if (o.kind == Kind.MATCH) {
                 for (m in modelTokens) {
                     Regex("$m\\s*/\\s*([0-9]{2,3})").find(t)?.let { o.variant = "${m.uppercase()}/${it.groupValues[1]}" }
@@ -894,6 +908,7 @@ class MainActivity : Activity() {
         token++
         val my = token
         extractScheduled = false
+        detailAttempt = 0
         status.text = "Garanti ve satıcı kontrolü ${detailIndex + 1}/${detailQueue.size}: ${o.site}…"
         web.loadUrl(o.link)
         handler.postDelayed({ if (my == token) detailExtract() }, 20000)
@@ -906,6 +921,13 @@ class MainActivity : Activity() {
             if (my != token) return@evaluateJavascript
             try {
                 val d = JSONObject(JSONTokener(raw).nextValue() as String)
+                if (d.optInt("len") < 3000 && detailAttempt < 2) {
+                    detailAttempt++
+                    status.text = "${o.site}: ürün sayfası yükleniyor (${detailAttempt}. tekrar)…"
+                    web.evaluateJavascript("window.scrollTo(0, ${2000 + detailAttempt * 2000});", null)
+                    handler.postDelayed({ if (my == token) detailExtract() }, 3500)
+                    return@evaluateJavascript
+                }
                 o.warranty = d.optString("w")
                 o.warrantyLine = d.optString("wl")
                 o.seller = d.optString("seller").trim()
@@ -1064,7 +1086,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 11\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 12\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

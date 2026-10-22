@@ -74,6 +74,7 @@ class MainActivity : Activity() {
         var badge: String = "",          // "Resmi Satıcı", "Yetkili Satıcı"
         var exact: Boolean = false,      // barkodla sitede birebir bulundu
         var dupCount: Int = 0,           // aynı ilanı satan başka satıcı sayısı
+        var note: String = "",           // "★ birim fiyatı en uygun", "⚠ birim fiyatı 5 kat"
     )
 
     private enum class Kind { MATCH, MUADIL, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -180,7 +181,7 @@ class MainActivity : Activity() {
           if (bm) badge = bm[0];
           for (var i = 0; i < lines.length && !seller; i++) {
             var L = lines[i];
-            if (/^ödeme fırsatları$/i.test(L) && i > 0) {
+            if ((/^ödeme fırsatları$/i.test(L) || (/^teslimat seçenekleri$/i.test(L) && location.host.indexOf('hepsiburada') >= 0)) && i > 0) {
               for (var hb = i - 1; hb >= Math.max(0, i - 4); hb--) {
                 var cand = lines[hb];
                 if (/^[\d.,\s]+$/.test(cand) || /resmi satıcı|yetkili satıcı/i.test(cand) || junk.test(cand) || notName.test(cand)) continue;
@@ -260,6 +261,9 @@ class MainActivity : Activity() {
               .replace(/aylık\s*(?:₺\s?)?[\d.,]+\s*(?:TL|₺)?/gi, ' ')
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*(?:kupon|indirim|parafpara|puan|üzeri|kazan)/gi, ' ')
               .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
+              // "(510,89 TL/100 ml)", "1,89 TL/adet" gibi birim fiyat yazıları ürün fiyatı değildir
+              .replace(/\([^)]*\/[^)]*\)/g, ' ')
+              .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*\/\s*[0-9]*\s*[a-zçğıöşü]+/gi, ' ')
               .replace(/\([^)]*başına[^)]*\)/gi, ' ')
               .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*(?:\s*TL)?/gi, ' ');
           }
@@ -324,7 +328,7 @@ class MainActivity : Activity() {
             text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
             var title = '';
             // Kargo, rozet, puan gibi satırlar ürün adı değildir
-            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden/i;
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:/i;
             cands.forEach(function(c){
               c = (c || '').replace(/\s+/g, ' ').trim();
               if (c.length >= 10 && c.length <= 250 && c.length > title.length && !notTitle.test(c)) title = c;
@@ -388,7 +392,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 20", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 21", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -684,10 +688,13 @@ class MainActivity : Activity() {
         val t = lowerTitle
             .replace("kablosuz", " ")
             .replace(Regex("[0-9]+\\s*(adet\\s*)?yedek (bıçak|başlık)"), " ") // "1 Yedek Bıçak" = kutudan çıkan yedek
-        val whole = setOf("askı", "stand", "kapak")
-        return accessoryWords.any { w ->
-            if (w in whole) Regex("(?<![\\p{L}])$w(?![\\p{L}])").containsMatchIn(t) else t.contains(w)
-        }
+        // Başlığında 3+ farklı model sayan ilan ("QP2520/QP2530/QP2834 için") uyumlu aksesuardır
+        if (codesIn(lowerTitle).map { it.second }.distinct().size >= 3) return true
+        // Kısa kelimeler tam kelime olarak (Türkçe ekleriyle) aranır: "standı" evet, "baskılı" hayır
+        val whole = mapOf("askı" to "askı(sı)?", "stand" to "stand(ı|lar|ları)?", "kapak" to "(kapak|kapağı)")
+        if (whole.values.any { Regex("(?<![\\p{L}])$it(?![\\p{L}])").containsMatchIn(t) }) return true
+        return accessoryWords.any { w -> w !in whole && t.contains(w) } ||
+            listOf("tutucu", "şarj tabanı", "jilet").any { t.contains(it) }
     }
 
     private val appleCode = Regex("\\b([a-z0-9]{4,5})([a-z]{1,2})/a\\b")
@@ -740,7 +747,8 @@ class MainActivity : Activity() {
     /** Sade arama: markasız, miktarsız; ürün türü + ölçü ("ataş no 6") */
     private fun simplifiedQuery(q: String): String {
         val (words, hard) = querySpec(q)
-        val type = words.drop(1).firstOrNull() ?: words.firstOrNull() ?: return ""
+        val typeNorm = words.drop(1).firstOrNull() ?: words.firstOrNull() ?: return ""
+        val type = q.split(Regex("[\\s:]+")).firstOrNull { norm(it).startsWith(typeNorm) } ?: typeNorm
         val specs = hard.map { it.replace(Regex("([a-zçğıöşü]+)([0-9]+)"), "$1 $2") }
         return (listOf(type) + specs).joinToString(" ")
     }
@@ -885,15 +893,17 @@ class MainActivity : Activity() {
     /** Başlıkların en az yarısında geçen kelimeler, ilk başlıktaki sırasıyla: "Tekerlekli Kitaplar Minik İtfaiye" */
     private fun commonName(titles: List<String>): String {
         val skip = setOf("fiyatı", "fiyatları", "fiyat", "satın", "yorumları", "özellikleri", "web", "sonuçları", "için", "ile")
+            .map { norm(it) }.toSet()
         val clean = titles.map { it.replace(Regex("[0-9]{8,14}"), " ") }.filter { it.any { c -> c.isLetter() } }
         if (clean.size < 2) return ""
-        val sets = clean.map { t -> t.split(Regex("[^\\p{L}\\p{N}]+")).map { norm(it) }.filter { it.length >= 3 && it !in skip }.toSet() }
+        val stem = { w: String -> norm(w).let { if (it.length > 5) it.removeSuffix("lar").removeSuffix("ler") else it } }
+        val sets = clean.map { t -> t.split(Regex("[^\\p{L}\\p{N}]+")).map(stem).filter { it.length >= 3 && it !in skip }.toSet() }
         val counts = sets.flatten().groupingBy { it }.eachCount()
         val common = counts.filter { it.value * 2 >= clean.size }.keys
-        val base = clean.maxByOrNull { t -> t.split(" ").count { norm(it) in common } } ?: return ""
+        val base = clean.maxByOrNull { t -> t.split(" ").count { stem(it) in common } } ?: return ""
         val out = mutableListOf<String>()
         for (w in base.split(Regex("[^\\p{L}\\p{N}'’]+"))) {
-            if (norm(w) in common && out.none { norm(it) == norm(w) }) out.add(w)
+            if (stem(w) in common && out.none { stem(it) == stem(w) }) out.add(w)
         }
         return if (out.size >= 2) out.take(8).joinToString(" ") else ""
     }
@@ -1018,7 +1028,10 @@ class MainActivity : Activity() {
     // ---------- Eşleştirme ----------
 
     // Aynı şeyin farklı yazımları tek biçime iner (ataç = ataş)
-    private fun norm(s: String) = s.lowercase(Locale("tr", "TR")).replace("ataç", "ataş").replace(Regex("[^a-z0-9çğıöşü]"), "")
+    // Türkçe harfler tek biçime iner (Itfaiye = İtfaiye, Clınıcal = Clinical); yazım eşleri birleşir (ataç = ataş)
+    private fun norm(s: String) = s.lowercase(Locale("tr", "TR"))
+        .replace('ı', 'i').replace('ş', 's').replace('ç', 'c').replace('ğ', 'g').replace('ö', 'o').replace('ü', 'u')
+        .replace("atac", "atas").replace(Regex("[^a-z0-9]"), "")
 
     private fun classify() {
         val id = identity
@@ -1242,6 +1255,14 @@ class MainActivity : Activity() {
                     handler.postDelayed({ if (my == token) detailExtract() }, 3500)
                     return@evaluateJavascript
                 }
+                val noWarranty = d.optString("w").isEmpty() && d.optString("wt").isEmpty() && d.optString("wd").isEmpty()
+                if (noWarranty && !bookMode && codesIn(o.title).isNotEmpty() && detailAttempt < 3) {
+                    detailAttempt = 3
+                    status.text = "${o.site}: garanti bilgisi için sayfanın altına iniliyor…"
+                    web.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
+                    handler.postDelayed({ if (my == token) detailExtract() }, 3500)
+                    return@evaluateJavascript
+                }
                 o.warranty = d.optString("w")
                 o.warrantyLine = d.optString("wl")
                 o.seller = d.optString("seller").trim()
@@ -1319,6 +1340,7 @@ class MainActivity : Activity() {
                 ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
             }
             sectionTitle("Eşleşen ürünler", green)
+            markUnitPrices(matches)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
         val muadils = collapse(others.filter { it.kind == Kind.MUADIL })
@@ -1361,6 +1383,21 @@ class MainActivity : Activity() {
         buildReport(matches, others)
     }
 
+    /** Eşleşenlerde: birim fiyatı en uygun olanı ve medyanın 3 katından pahalı olanları işaretle */
+    private fun markUnitPrices(matches: List<Offer>) {
+        val withUnit = matches.mapNotNull { o -> unitPrice(o)?.let { o to it.first } }
+        if (withUnit.size < 2) return
+        val sorted = withUnit.map { it.second }.sorted()
+        val median = sorted[sorted.size / 2]
+        withUnit.forEach { (o, u) ->
+            o.note = when {
+                u == sorted.first() && o !== matches.first() -> "★ birim fiyatı en uygun"
+                u > median * 3 -> "⚠ birim fiyatı diğerlerinin ${(u / median).toInt()} katı"
+                else -> ""
+            }
+        }
+    }
+
     /** Aynı ilanı satan birçok satıcıyı tek satıra indirir: en ucuzu kalır, diğerleri sayılır */
     private fun collapse(list: List<Offer>): List<Offer> =
         list.groupBy { norm(it.title) }.values.map { g ->
@@ -1388,6 +1425,7 @@ class MainActivity : Activity() {
             if (o.dupCount > 0) append("  · +${o.dupCount} satıcı daha")
         }
         val tag = when {
+            o.kind == Kind.MATCH && (o.variant == "Kadın" || o.variant == "Erkek") -> "Versiyon: ${o.variant}"
             o.kind == Kind.MATCH && o.variant.isNotEmpty() -> "Paket: ${o.variant}"
             o.kind != Kind.MATCH -> kindLabel(o)
             else -> ""
@@ -1397,6 +1435,7 @@ class MainActivity : Activity() {
         if (o.origin.isNotEmpty()) card.addView(label(o.origin, 12f, if (o.origin.startsWith("Türkiye")) green else red, true))
         warrantyBadge(o)?.let { (txt, col) -> card.addView(label(txt, 12f, col, true)) }
         if (o.exact) card.addView(label("Barkodla birebir bulundu", 12f, green, true))
+        if (o.note.isNotEmpty()) card.addView(label(o.note, 12f, if (o.note.startsWith("★")) green else red, true))
         if (o.badge.isNotEmpty()) card.addView(label("✓ ${o.badge}", 12f, green, true))
         if (o.seller.isNotEmpty()) card.addView(label(
             "Satıcı: ${o.seller}" + if (o.sellerScore.isNotEmpty()) " (puan ${o.sellerScore})" else "", 12f, ink))
@@ -1422,7 +1461,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 20\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 21\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")
@@ -1435,14 +1474,15 @@ class MainActivity : Activity() {
             if (o.basket) report.append(" sepette")
             if (o.listPrice > o.price) report.append(" (liste ").append(money(o.listPrice)).append(")")
             report.append(" | ").append(o.site)
-            if (o.variant.isNotEmpty()) report.append(" | paket ").append(o.variant)
+            if (o.variant.isNotEmpty()) report.append(if (o.variant == "Kadın" || o.variant == "Erkek") " | versiyon " else " | paket ").append(o.variant)
+            if (o.note.isNotEmpty()) report.append(" | ").append(o.note)
             unitText(o).takeIf { it.isNotEmpty() }?.let { report.append(" | ").append(it) }
             if (o.exact) report.append(" | barkodla birebir")
             if (o.badge.isNotEmpty()) report.append(" | ").append(o.badge)
             if (o.origin.isNotEmpty()) report.append(" | ").append(o.origin)
-            if (o.detailChecked) report.append(" | garanti: ").append(o.warranty.ifEmpty { o.warrantyType.ifEmpty { "?" } })
+            if (o.detailChecked && warrantyBadge(o) != null) report.append(" | garanti: ").append(o.warranty.ifEmpty { o.warrantyType.ifEmpty { "?" } })
                 .append(" / süre: ").append(o.warrantyDuration.ifEmpty { "?" })
-                .append(" | satıcı: ").append(o.seller.ifEmpty { "?" })
+            if (o.detailChecked) report.append(" | satıcı: ").append(o.seller.ifEmpty { "?" })
                 .append(if (o.sellerScore.isNotEmpty()) " (${o.sellerScore})" else "")
             if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(countText(o.ratingCount)).append(")")
             report.append("\n  ").append(o.title).append("\n")

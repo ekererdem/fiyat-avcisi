@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -33,27 +34,61 @@ import android.widget.Toast
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.net.URLEncoder
+import java.text.NumberFormat
+import java.util.Locale
 
 /**
- * Okuma testi: aynı aramayı 6 sitede, telefonun içindeki gizli bir tarayıcıyla açar
- * ve her sitenin sayfasından fiyat okunabiliyor mu, engel var mı raporlar.
+ * 2. deneme: aynı aramayı 6 sitede telefonun içindeki gizli tarayıcıyla açar,
+ * sayfadaki ürün kartlarını tek tek okur (ad, gerçek fiyat, puan, link),
+ * aksesuarları ayırır ve hepsini tek listede fiyata göre sıralar.
  */
 class MainActivity : Activity() {
 
-    private data class Site(val name: String, val url: (String) -> String)
+    /** linkPattern: o sitede bir ürün sayfası linkini tanıyan kalıp */
+    private data class Site(val name: String, val linkPattern: String, val url: (String) -> String)
+
+    private data class Offer(
+        val site: String,
+        val title: String,
+        val price: Double,
+        val listPrice: Double,
+        val basket: Boolean,
+        val rating: String,
+        val ratingCount: String,
+        val link: String,
+        val raw: String,
+        var kind: Kind = Kind.OTHER,
+    )
+
+    private enum class Kind { MATCH, ACCESSORY, OTHER }
 
     private val sites = listOf(
-        Site("Trendyol") { "https://www.trendyol.com/sr?q=$it" },
-        Site("Hepsiburada") { "https://www.hepsiburada.com/ara?q=$it" },
-        Site("Amazon") { "https://www.amazon.com.tr/s?k=$it" },
-        Site("MediaMarkt") { "https://www.mediamarkt.com.tr/tr/search.html?query=$it" },
-        Site("Teknosa") { "https://www.teknosa.com/arama/?s=$it" },
-        Site("N11") { "https://www.n11.com/arama?q=$it" },
+        Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
+        Site("Hepsiburada", "-pm?-[A-Za-z0-9]") { "https://www.hepsiburada.com/ara?q=$it" },
+        Site("Amazon", "/dp/") { "https://www.amazon.com.tr/s?k=$it" },
+        Site("MediaMarkt", "/product/") { "https://www.mediamarkt.com.tr/tr/search.html?query=$it" },
+        Site("Teknosa", "-p-[0-9]") { "https://www.teknosa.com/arama/?s=$it" },
+        Site("N11", "/urun/") { "https://www.n11.com/arama?q=$it" },
+    )
+
+    // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
+    private val accessoryWords = listOf(
+        "uyumlu", "yedek", "kablo", "kılıf", "kilif", "adaptör", "adaptor", "aparat",
+        "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
     )
 
     private val gold = Color.parseColor("#C8961E")
     private val ink = Color.parseColor("#1D1B16")
     private val paper = Color.parseColor("#FAF7F0")
+    private val muted = Color.parseColor("#6B6458")
+    private val green = Color.parseColor("#2E7D32")
+    private val red = Color.parseColor("#B3261E")
+    private val orange = Color.parseColor("#E07B00")
+
+    private val tl = NumberFormat.getNumberInstance(Locale("tr", "TR")).apply {
+        maximumFractionDigits = 2
+        minimumFractionDigits = 0
+    }
 
     private lateinit var input: EditText
     private lateinit var web: WebView
@@ -64,6 +99,8 @@ class MainActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val report = StringBuilder()
+    private val offers = mutableListOf<Offer>()
+    private val siteSummary = mutableListOf<String>()
 
     private var running = false
     private var index = 0
@@ -73,29 +110,76 @@ class MainActivity : Activity() {
     private var httpStatus = 0
     private var loadError = ""
 
-    // Sayfa yüklendikten sonra çalışan okuyucu
-    private val extractJs = """
+    /**
+     * Ürün kartı okuyucu. Her ürün linkinden yukarı doğru çıkıp yalnızca o ürünü içeren
+     * en büyük kutuyu "kart" kabul eder; kartın içinden ad, fiyat ve puanı çeker.
+     * Taksit, aylık ödeme, kupon ve kargo tutarlarını fiyat saymadan önce siler.
+     */
+    private fun extractJs(linkPattern: String) = """
         (function(){
-          var t = document.body ? document.body.innerText : '';
-          var low = t.toLowerCase();
-          var re = /(?:₺\s?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)|(?:\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺))/g;
-          var prices = t.match(re) || [];
-          var words = ['captcha','robot olmad','robot değil','access denied','erişim engellendi',
-            'are you a human','verify you are human','güvenlik doğrulaması','pardon our interruption',
-            'request blocked','just a moment','karakterleri girin','characters you see'];
+          var pat = new RegExp('__PAT__');
+          var priceRe = /(?:₺\s?[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?)|(?:[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺))/g;
+          var priceOne = new RegExp(priceRe.source);
+          function keyOf(h){ var m = h.match(/\/dp\/([A-Z0-9]{10})/); if (m) return 'dp/' + m[1]; return h.split('#')[0].split('?')[0]; }
+          function clean(t){
+            return t.replace(/\d+\s*[xX×]\s*(?:₺\s?)?[1-9][\d.,]*\s*(?:TL|₺)?/g, ' ')
+              .replace(/aylık\s*(?:₺\s?)?[\d.,]+\s*(?:TL|₺)?/gi, ' ')
+              .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*(?:kupon|indirim|parafpara|puan|üzeri|kazan)/gi, ' ')
+              .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ');
+          }
+          function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
+
+          var low = (document.body ? document.body.innerText : '').toLowerCase();
+          var words = ['captcha','robot olmad','robot değil','access denied','erişim engellendi','are you a human',
+            'verify you are human','güvenlik doğrulaması','pardon our interruption','request blocked','just a moment',
+            'karakterleri girin','characters you see'];
           var hit = '';
-          for (var i = 0; i < words.length; i++) { if (low.indexOf(words[i]) >= 0) { hit = words[i]; break; } }
-          var ld = document.querySelectorAll('script[type="application/ld+json"]').length;
-          var state = [];
-          try { Object.keys(window).forEach(function(k){ if (/^__.*(STATE|DATA|PROPS).*__$/i.test(k)) state.push(k); }); } catch(e) {}
-          if (document.getElementById('__NEXT_DATA__')) state.push('__NEXT_DATA__');
-          return JSON.stringify({
-            title: document.title, url: location.href, len: t.length,
-            block: hit, prices: prices.slice(0, 6), priceCount: prices.length,
-            ld: ld, state: state.slice(0, 4), sample: t.replace(/\s+/g, ' ').slice(0, 400)
-          });
+          for (var w = 0; w < words.length; w++) { if (low.indexOf(words[w]) >= 0) { hit = words[w]; break; } }
+
+          var anchors = Array.prototype.slice.call(document.querySelectorAll('a[href]'))
+            .filter(function(a){ return pat.test(a.href); });
+          var seen = {}, cards = [];
+          for (var i = 0; i < anchors.length && cards.length < 20; i++) {
+            var a = anchors[i], key = keyOf(a.href);
+            if (seen[key]) continue;
+            var el = a;
+            for (var up = 0; up < 12 && el.parentElement; up++) {
+              var p = el.parentElement, keys = {}, n = 0;
+              var inner = p.querySelectorAll('a[href]');
+              for (var j = 0; j < inner.length; j++) {
+                if (pat.test(inner[j].href)) { var k = keyOf(inner[j].href); if (!keys[k]) { keys[k] = 1; n++; } }
+              }
+              if (n > 1) break;
+              el = p;
+            }
+            var text = el.innerText || '';
+            var ps = (clean(text).match(priceRe) || []).map(num).filter(function(x){ return x > 0; });
+            if (!ps.length) continue;
+            seen[key] = 1;
+            var max = Math.max.apply(null, ps);
+            var ok = ps.filter(function(x){ return x >= max * 0.4; });
+            var price = Math.min.apply(null, ok);
+
+            var cands = [a.getAttribute('title') || '', a.getAttribute('aria-label') || ''];
+            var img = el.querySelector('img[alt]'); if (img) cands.push(img.getAttribute('alt') || '');
+            var h = el.querySelector('h2,h3,h4'); if (h) cands.push(h.innerText || '');
+            text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
+            var title = '';
+            cands.forEach(function(c){
+              c = (c || '').replace(/\s+/g, ' ').trim();
+              if (c.length >= 10 && c.length <= 250 && c.length > title.length) title = c;
+            });
+
+            var rm = text.match(/(?:^|\s)([1-5][.,]\d)(?=\s|\()/);
+            var cm = text.match(/\((\d{1,3}(?:\.\d{3})+|\d{1,6})\)/);
+            cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
+              r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
+              raw: text.replace(/\s+/g, ' ').slice(0, 160) });
+          }
+          return JSON.stringify({ title: document.title, url: location.href, block: hit,
+            anchors: anchors.length, cards: cards });
         })()
-    """.trimIndent()
+    """.trimIndent().replace("__PAT__", linkPattern)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,21 +203,23 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
+    private fun label(text: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+        this.text = text
+        textSize = size
+        setTextColor(color)
+        if (bold) typeface = Typeface.DEFAULT_BOLD
+    }
+
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(paper)
         }
 
-        val header = TextView(this).apply {
-            text = "Fiyat Avcısı · Okuma Testi"
-            setTextColor(gold)
+        root.addView(label("Fiyat Avcısı · Deneme 2", 18f, gold, true).apply {
             setBackgroundColor(ink)
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(16), dp(14), dp(16), dp(14))
-        }
-        root.addView(header)
+        })
 
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -148,7 +234,7 @@ class MainActivity : Activity() {
             }
         }
         searchRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        searchRow.addView(button("Test et") { startTest() }, LinearLayout.LayoutParams(
+        searchRow.addView(button("Ara") { startTest() }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { marginStart = dp(8) })
         root.addView(searchRow)
@@ -164,15 +250,12 @@ class MainActivity : Activity() {
         actions.addView(button("Paylaş") { shareReport() }, lp())
         root.addView(actions)
 
-        status = TextView(this).apply {
-            text = "Bir ürün yaz ve Test et'e bas. 6 site sırayla açılır (~1 dk)."
-            setTextColor(ink)
+        status = label("Ürünü yaz, Ara'ya bas. 6 site sırayla taranır (~1 dk).", 14f, ink).apply {
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         root.addView(status)
 
-        // Tarayıcı arkada tam boyutta durur (sayfalar gerçek ekran boyutunda yüklensin diye),
-        // sonuç listesi onun üstünü kapatır.
+        // Tarayıcı arkada tam boyutta durur, sonuç listesi üstünü kapatır
         val stack = FrameLayout(this)
         web = WebView(this)
         stack.addView(web, FrameLayout.LayoutParams(
@@ -207,7 +290,6 @@ class MainActivity : Activity() {
             loadWithOverviewMode = true
             useWideViewPort = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            // "wv" etiketi sitelere bunun gömülü tarayıcı olduğunu söyler; normal Chrome gibi görünsün
             userAgentString = userAgentString
                 .replace("; wv", "")
                 .replace(Regex("Version/\\d+\\.\\d+ "), "")
@@ -218,7 +300,6 @@ class MainActivity : Activity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val scheme = request.url.scheme ?: ""
-                // Sitenin kendi uygulamasını açmaya çalışmasını engelle
                 return scheme != "http" && scheme != "https"
             }
 
@@ -226,9 +307,10 @@ class MainActivity : Activity() {
                 if (!running || extractScheduled) return
                 extractScheduled = true
                 val my = token
-                // Sayfa içeriği JavaScript ile sonradan dolduğu için biraz bekle, sonra aşağı kaydır
-                handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 1500);", null) }, 3000)
-                handler.postDelayed({ if (my == token) extract() }, 7000)
+                // Kartlar kaydırdıkça yüklendiği için iki kez aşağı in, sonra oku
+                handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 2000);", null) }, 2500)
+                handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 4000);", null) }, 4500)
+                handler.postDelayed({ if (my == token) extract() }, 7500)
             }
 
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -241,7 +323,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- Test akışı ----------
+    // ---------- Arama akışı ----------
 
     private fun startTest() {
         if (running) return
@@ -249,11 +331,13 @@ class MainActivity : Activity() {
         if (query.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
+        if (resultsScroll.visibility != View.VISIBLE) toggleBrowser()
         running = true
         index = 0
+        offers.clear()
+        siteSummary.clear()
         results.removeAllViews()
         report.setLength(0)
-        report.append("FİYAT AVCISI OKUMA TESTİ\nArama: ").append(query).append("\n\n")
         runNext()
     }
 
@@ -261,7 +345,7 @@ class MainActivity : Activity() {
         if (index >= sites.size) {
             running = false
             web.stopLoading()
-            status.text = "Bitti. Raporu Kopyala ya da Paylaş ile bana gönder."
+            showFinal()
             return
         }
         val site = sites[index]
@@ -270,87 +354,189 @@ class MainActivity : Activity() {
         extractScheduled = false
         httpStatus = 0
         loadError = ""
-        status.text = "${index + 1}/${sites.size}: ${site.name} açılıyor…"
+        status.text = "${index + 1}/${sites.size}: ${site.name} taranıyor…"
         val q = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
         web.loadUrl(site.url(q))
-        // Hiç yüklenmezse 25 sn sonra yine de oku ve geç
         handler.postDelayed({ if (my == token) extract() }, 25000)
     }
 
     private fun extract() {
         val site = sites[index]
-        val my = ++token // bu siteye ait bekleyen diğer zamanlayıcıları iptal eder
-        web.evaluateJavascript(extractJs) { raw ->
+        val my = ++token
+        web.evaluateJavascript(extractJs(site.linkPattern)) { raw ->
             if (my != token) return@evaluateJavascript
             val data = try {
                 JSONObject(JSONTokener(raw).nextValue() as String)
             } catch (e: Exception) {
                 null
             }
-            addResult(site.name, data)
+            collect(site.name, data)
             index++
             handler.postDelayed({ if (my == token) runNext() }, 600)
         }
     }
 
-    private fun addResult(name: String, d: JSONObject?) {
-        val priceCount = d?.optInt("priceCount") ?: 0
+    private fun collect(name: String, d: JSONObject?) {
+        val cards = d?.optJSONArray("cards")
+        val count = cards?.length() ?: 0
+        for (i in 0 until count) {
+            val c = cards!!.getJSONObject(i)
+            offers.add(
+                Offer(
+                    site = name,
+                    title = c.optString("t"),
+                    price = c.optDouble("p"),
+                    listPrice = c.optDouble("lp"),
+                    basket = c.optBoolean("sepet"),
+                    rating = c.optString("r"),
+                    ratingCount = c.optString("rc"),
+                    link = c.optString("link"),
+                    raw = c.optString("raw"),
+                )
+            )
+        }
         val block = d?.optString("block").orEmpty()
-        val verdict: String
-        val color: Int
-        when {
-            loadError.isNotEmpty() && d == null -> { verdict = "AÇILMADI"; color = Color.parseColor("#B3261E") }
-            (block.isNotEmpty() && priceCount < 3) || httpStatus == 403 || httpStatus == 429 ->
-                { verdict = "ENGEL"; color = Color.parseColor("#B3261E") }
-            priceCount > 0 -> { verdict = "OKUNDU"; color = Color.parseColor("#2E7D32") }
-            else -> { verdict = "FİYAT YOK"; color = Color.parseColor("#E07B00") }
+        val verdict = when {
+            d == null -> "AÇILMADI${if (loadError.isNotEmpty()) " ($loadError)" else ""}"
+            count == 0 && (block.isNotEmpty() || httpStatus == 403 || httpStatus == 429) -> "ENGEL ($block $httpStatus)".trim()
+            count == 0 -> "ÜRÜN KARTI BULUNAMADI (ürün linki: ${d?.optInt("anchors") ?: 0})"
+            else -> "$count ürün okundu"
         }
+        siteSummary.add("$name: $verdict")
+        status.text = "$name: $verdict"
+    }
 
-        val prices = d?.optJSONArray("prices")
-        val priceList = (0 until (prices?.length() ?: 0)).joinToString(" · ") { prices!!.optString(it) }
-        val state = d?.optJSONArray("state")
-        val stateList = (0 until (state?.length() ?: 0)).joinToString(", ") { state!!.optString(it) }
+    // ---------- Eşleştirme ----------
 
-        val detail = buildString {
-            if (httpStatus != 0) append("HTTP $httpStatus\n")
-            if (loadError.isNotEmpty()) append("Hata: $loadError\n")
-            if (block.isNotEmpty()) append("Engel işareti: \"$block\"\n")
-            append("Bulunan fiyat sayısı: $priceCount\n")
-            if (priceList.isNotEmpty()) append("İlk fiyatlar: $priceList\n")
-            append("Yapısal veri: JSON-LD ${d?.optInt("ld") ?: 0}")
-            if (stateList.isNotEmpty()) append(", $stateList")
-            append("\nSayfa başlığı: ${d?.optString("title").orEmpty()}")
+    private fun norm(s: String) = s.lowercase(Locale("tr", "TR")).replace(Regex("[^a-z0-9çğıöşü]"), "")
+
+    private fun classify() {
+        val tokens = query.lowercase(Locale("tr", "TR")).split(Regex("\\s+")).filter { it.isNotBlank() }
+        // Model kodu: hem harf hem rakam içeren kelime (ör. qp2834)
+        val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
+        val required = modelTokens.ifEmpty { tokens.filter { it.length >= 3 }.map { norm(it) } }
+
+        for (o in offers) {
+            val t = o.title.lowercase(Locale("tr", "TR"))
+            val nt = norm(o.title)
+            o.kind = when {
+                accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
+                required.isNotEmpty() && required.all { nt.contains(it) } -> Kind.MATCH
+                else -> Kind.OTHER
+            }
         }
+        // Eşleşenlerin medyanının çok altında kalan "eşleşme" büyük ihtimalle aksesuardır
+        val matchPrices = offers.filter { it.kind == Kind.MATCH }.map { it.price }.sorted()
+        if (matchPrices.size >= 3) {
+            val median = matchPrices[matchPrices.size / 2]
+            offers.filter { it.kind == Kind.MATCH && it.price < median * 0.35 }.forEach { it.kind = Kind.ACCESSORY }
+        }
+    }
 
+    // ---------- Sonuç ekranı ----------
+
+    private fun money(v: Double) = "${tl.format(v)} TL"
+
+    private fun showFinal() {
+        classify()
+        results.removeAllViews()
+
+        val matches = offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }
+        val others = offers.filter { it.kind != Kind.MATCH }.sortedBy { it.price }
+
+        status.text = if (matches.isEmpty()) "Eşleşen ürün bulunamadı. Aşağıda benzer sonuçlar var."
+        else "${matches.size} eşleşen teklif · en ucuz ${money(matches.first().price)} (${matches.first().site})"
+
+        if (matches.isNotEmpty()) {
+            val cheapest = matches.first().price
+            val top = matches.last().price
+            if (top > cheapest) {
+                results.addView(label(
+                    "Fark: en pahalısı ${money(top)} — ${money(top - cheapest)} daha fazla", 13f, muted
+                ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
+            }
+            sectionTitle("Eşleşen ürünler", green)
+            matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
+        }
+        if (others.isNotEmpty()) {
+            sectionTitle("Aksesuar / farklı ürün olabilir", orange)
+            others.forEach { offerRow(it, false) }
+        }
+        sectionTitle("Site durumu", ink)
+        siteSummary.forEach { results.addView(label("• $it", 13f, ink).apply { setPadding(dp(4), dp(2), dp(4), dp(2)) }) }
+
+        buildReport(matches, others)
+    }
+
+    private fun sectionTitle(text: String, color: Int) {
+        results.addView(label(text, 16f, color, true).apply { setPadding(dp(4), dp(16), dp(4), dp(4)) })
+    }
+
+    private fun offerRow(o: Offer, best: Boolean) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setBackgroundColor(if (best) Color.parseColor("#FFF6DD") else Color.WHITE)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setOnClickListener {
+                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(o.link))) } catch (e: Exception) {}
+            }
         }
-        card.addView(TextView(this).apply {
-            text = "$name   $verdict"
-            setTextColor(color)
-            textSize = 17f
-            typeface = Typeface.DEFAULT_BOLD
-        })
-        card.addView(TextView(this).apply {
-            text = detail
-            setTextColor(ink)
-            textSize = 13f
-            setPadding(0, dp(6), 0, 0)
-        })
+        val head = buildString {
+            append(money(o.price))
+            if (o.basket) append(" (sepette)")
+            append("  ·  ").append(o.site)
+            if (best) append("  ★ en ucuz")
+        }
+        card.addView(label(head, 16f, ink, true))
+        if (o.listPrice > o.price) {
+            card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
+        }
+        card.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 13f, ink).apply { setPadding(0, dp(4), 0, 0) })
+        val meta = buildString {
+            if (o.rating.isNotEmpty()) append("Puan ${o.rating}")
+            if (o.ratingCount.isNotEmpty()) append(" (${o.ratingCount})")
+            if (isEmpty()) append("Puan bilgisi okunamadı")
+            append("  ·  dokun: sitede aç")
+        }
+        card.addView(label(meta, 12f, muted).apply { setPadding(0, dp(4), 0, 0) })
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(10) })
-
-        report.append("== ").append(name).append(": ").append(verdict).append(" ==\n")
-            .append(detail).append("\n")
-            .append("Adres: ").append(d?.optString("url").orEmpty()).append("\n")
-            .append("Metin uzunluğu: ").append(d?.optInt("len") ?: 0).append("\n")
-            .append("Örnek: ").append(d?.optString("sample").orEmpty().take(300)).append("\n\n")
+        ).apply { topMargin = dp(8) })
     }
 
     // ---------- Rapor ----------
+
+    private fun buildReport(matches: List<Offer>, others: List<Offer>) {
+        report.setLength(0)
+        report.append("FİYAT AVCISI · DENEME 2\nArama: ").append(query).append("\n\n")
+        report.append("SİTE DURUMU\n")
+        siteSummary.forEach { report.append("- ").append(it).append("\n") }
+
+        report.append("\nEŞLEŞENLER (ucuzdan pahalıya)\n")
+        if (matches.isEmpty()) report.append("(yok)\n")
+        matches.forEach { o ->
+            report.append("- ").append(money(o.price))
+            if (o.basket) report.append(" sepette")
+            if (o.listPrice > o.price) report.append(" (liste ").append(money(o.listPrice)).append(")")
+            report.append(" | ").append(o.site)
+            if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(o.ratingCount).append(")")
+            report.append("\n  ").append(o.title).append("\n")
+        }
+
+        report.append("\nAKSESUAR / FARKLI\n")
+        others.take(15).forEach { o ->
+            report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
+                .append(if (o.kind == Kind.ACCESSORY) "aksesuar" else "farklı").append("\n  ").append(o.title).append("\n")
+        }
+
+        // Okuyucuyu iyileştirmem için: her siteden ilk 2 kartın ham metni
+        report.append("\nHAM KART ÖRNEKLERİ\n")
+        sites.forEach { s ->
+            offers.filter { it.site == s.name }.take(2).forEach { o ->
+                report.append("[").append(s.name).append("] ").append(o.raw).append("\n")
+            }
+        }
+    }
 
     private fun copyReport() {
         if (report.isEmpty()) return

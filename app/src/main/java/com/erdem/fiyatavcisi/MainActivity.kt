@@ -143,9 +143,6 @@ class MainActivity : Activity() {
         (function(){
           var t = document.body ? document.body.innerText : '';
           var fullLen = t.length;
-          // Sayfanın altındaki "benzer ürünler" gibi bölümler başka ürünlere ait; garanti/satıcıyı onlardan okuma
-          var cut = t.search(/benzer ürünler|bunlar da ilgini|ilgini(zi)? çekebilir|birlikte al|önerilen ürünler|sizin için seçtik|son gezdiğin|tamamlayıcı ürünler|bu ürünü alanlar/i);
-          if (cut > 500) t = t.slice(0, cut);
           var lines = t.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
           // Üst menü ve site linkleri satıcı adı sanılmasın
           var junk = /satış yap|satıcı ol|mesajlarım|giriş yap|üye ol|kampanya|popüler|yardım|sipariş|sepet|favori/i;
@@ -373,7 +370,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 18", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 19", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -1343,7 +1340,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 18\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 19\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

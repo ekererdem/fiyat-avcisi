@@ -62,7 +62,7 @@ class MainActivity : Activity() {
         var otherModel: String = "",
     )
 
-    private enum class Kind { MATCH, ACCESSORY, DIFFERENT_MODEL, OTHER }
+    private enum class Kind { MATCH, POSSIBLE, ACCESSORY, DIFFERENT_MODEL, OTHER }
 
     private val sites = listOf(
         Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
@@ -75,7 +75,7 @@ class MainActivity : Activity() {
 
     // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
     private val accessoryWords = listOf(
-        "uyumlu", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor", "aparat",
+        "uyumlu", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
         "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
     )
 
@@ -124,7 +124,7 @@ class MainActivity : Activity() {
     private fun extractJs(linkPattern: String) = """
         (function(){
           var pat = new RegExp('__PAT__');
-          var priceRe = /(?:₺\s?[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?)|(?:[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺))/g;
+          var priceRe = /(?:₺\s?[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?(?!\d))|(?:(?<![\d.,])(?<!,\s?)[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺(?!\s?\d)))/g;
           var priceOne = new RegExp(priceRe.source);
           function keyOf(h){ var m = h.match(/\/dp\/([A-Z0-9]{10})/); if (m) return 'dp/' + m[1]; return h.split('#')[0].split('?')[0]; }
           function clean(t){
@@ -132,7 +132,7 @@ class MainActivity : Activity() {
               .replace(/aylık\s*(?:₺\s?)?[\d.,]+\s*(?:TL|₺)?/gi, ' ')
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*(?:kupon|indirim|parafpara|puan|üzeri|kazan)/gi, ' ')
               .replace(/kargo[^\n]{0,15}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
-              .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*\s*(?:TL|₺)?/gi, ' ');
+              .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*(?:\s*TL)?/gi, ' ');
           }
           function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
 
@@ -237,7 +237,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 3", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 4", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -452,11 +452,13 @@ class MainActivity : Activity() {
         val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
         val required = modelTokens.ifEmpty { tokens.filter { it.length >= 3 }.map { norm(it) } }
 
-        val modelCode = Regex("[a-z]{1,4}[0-9]{3,5}")
+        val modelCode = Regex("\\b[a-z]{1,4}[0-9]{3,5}\\b")
+        // Model kodu dışındaki kelimeler (ör. philips, oneblade): kodu yazmayan ilanları yakalamak için
+        val otherWords = tokens.filter { t -> !(t.any { it.isDigit() } && t.any { it.isLetter() }) && t.length >= 3 }.map { norm(it) }
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
             val nt = norm(o.title)
-            val titleModels = modelCode.findAll(t.replace(" ", "")).map { it.value }.toSet()
+            val titleModels = modelCode.findAll(t).map { it.value }.toSet()
             o.kind = when {
                 accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
                 required.isNotEmpty() && required.all { nt.contains(it) } -> Kind.MATCH
@@ -465,6 +467,8 @@ class MainActivity : Activity() {
                     o.otherModel = titleModels.first().uppercase()
                     Kind.DIFFERENT_MODEL
                 }
+                // Model kodu yazmıyor ama diğer kelimelerin hepsi var: muhtemelen aynı ürün, kontrol edilmeli
+                modelTokens.isNotEmpty() && otherWords.isNotEmpty() && otherWords.all { nt.contains(it) } -> Kind.POSSIBLE
                 else -> Kind.OTHER
             }
             // Paket/varyant kodu: QP2834/31 gibi eğik çizgiden sonraki kısım
@@ -498,6 +502,7 @@ class MainActivity : Activity() {
         Kind.ACCESSORY -> "aksesuar"
         Kind.DIFFERENT_MODEL -> "farklı model (${o.otherModel})"
         Kind.OTHER -> "farklı ürün"
+        Kind.POSSIBLE -> "olası eşleşme (model kodu yazmıyor)"
         Kind.MATCH -> "eşleşme"
     }
 
@@ -531,8 +536,13 @@ class MainActivity : Activity() {
             sectionTitle("Eşleşen ürünler", green)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        val possibles = others.filter { it.kind == Kind.POSSIBLE }
+        if (possibles.isNotEmpty()) {
+            sectionTitle("Olası eşleşmeler — model kodu yazmıyor, kontrol et", orange)
+            possibles.forEach { offerRow(it, false) }
+        }
         val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
-        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL }
+        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE }
         if (diffModels.isNotEmpty()) {
             sectionTitle("Aynı aileden farklı modeller", orange)
             diffModels.forEach { offerRow(it, false) }
@@ -593,7 +603,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 3\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 4\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -609,8 +619,15 @@ class MainActivity : Activity() {
             report.append("\n  ").append(o.title).append("\n")
         }
 
+        report.append("\nOLASI EŞLEŞMELER (model kodu yazmıyor)\n")
+        val possibles = others.filter { it.kind == Kind.POSSIBLE }
+        if (possibles.isEmpty()) report.append("(yok)\n")
+        possibles.forEach { o ->
+            report.append("- ").append(money(o.price)).append(" | ").append(o.site).append("\n  ").append(o.title).append("\n")
+        }
+
         report.append("\nAKSESUAR / FARKLI\n")
-        others.take(15).forEach { o ->
+        others.filter { it.kind != Kind.POSSIBLE }.take(20).forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
                 .append(kindLabel(o)).append("\n  ").append(o.title).append("\n")
         }

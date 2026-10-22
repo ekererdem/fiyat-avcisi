@@ -61,6 +61,11 @@ class MainActivity : Activity() {
         var variant: String = "",
         var otherModel: String = "",
         var origin: String = "",
+        var detailChecked: Boolean = false,
+        var warranty: String = "",
+        var warrantyLine: String = "",
+        var seller: String = "",
+        var sellerLine: String = "",
     )
 
     private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -96,6 +101,30 @@ class MainActivity : Activity() {
         maximumFractionDigits = 0
     }
     private var attempt = 0
+    private var detailPhase = false
+    private val detailQueue = mutableListOf<Offer>()
+    private var detailIndex = 0
+
+    /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
+    private val detailJs = """
+        (function(){
+          var t = document.body ? document.body.innerText : '';
+          var lines = t.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
+          function around(re, n){
+            for (var i = 0; i < lines.length; i++) { if (re.test(lines[i])) return lines.slice(i, i + n).join(' | ').slice(0, 220); }
+            return '';
+          }
+          var m = t.match(/(ithalatçı firma garantili|ithalatçı garantili|resmi distribütör garantili|distribütör garantili|apple türkiye garantili|türkiye garantili|üretici garantili|marka garantili|uluslararası garanti)/i);
+          var by = t.match(/bu ürün\s+([^\n]{2,40}?)\s+tarafından/i);
+          var sold = t.match(/(?:^|\n)\s*(?:satıcı|satan|mağaza)\s*:?\s*\n?\s*([^\n|]{2,40})/i);
+          return JSON.stringify({
+            w: m ? m[1] : '',
+            wl: around(/garanti tipi|garanti türü/i, 2) || around(/garanti/i, 2),
+            sl: around(/^(satıcı|satan|mağaza|gönderici)(?![a-zA-Zçğıöşü])/i, 3),
+            seller: by ? by[1] : (sold ? sold[1] : '')
+          });
+        })()
+    """.trimIndent()
 
     private lateinit var input: EditText
     private lateinit var web: WebView
@@ -193,7 +222,7 @@ class MainActivity : Activity() {
             if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
 
             var rm = text.match(/(?:^|\s)([1-4][.,]\d|5[.,]0)(?=\s|\()/);
-            var cm = text.match(/\((\d{1,3}(?:[.,]\d{1,3})?\s?B|\d{1,3}(?:\.\d{3})+|\d{1,6})\)/);
+            var cm = text.match(/\((\d{1,3}(?:[.,]\d{1,3})?\s?B|\d{1,3}(?:\.\d{3})+|\d{1,6})(?:\s*[Dd]eğerlendirme)?\)/);
             cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
               raw: text.replace(/\s+/g, ' ').slice(0, 160) });
@@ -239,7 +268,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 5", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 6", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -330,6 +359,11 @@ class MainActivity : Activity() {
                 if (!running || extractScheduled) return
                 extractScheduled = true
                 val my = token
+                if (detailPhase) {
+                    handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 1500);", null) }, 2500)
+                    handler.postDelayed({ if (my == token) detailExtract() }, 5000)
+                    return
+                }
                 // Kartlar kaydırdıkça yüklendiği için iki kez aşağı in, sonra oku
                 handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 2000);", null) }, 2500)
                 handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 4000);", null) }, 4500)
@@ -366,9 +400,7 @@ class MainActivity : Activity() {
 
     private fun runNext() {
         if (index >= sites.size) {
-            running = false
-            web.stopLoading()
-            showFinal()
+            startDetails()
             return
         }
         val site = sites[index]
@@ -499,10 +531,12 @@ class MainActivity : Activity() {
         }
 
         // Apple gibi markaların parça numarasındaki bölge kodu: TU/A = Türkiye, diğerleri yurtdışı cihazı
-        val partNo = Regex("\\b[A-Z0-9]{4,5}([A-Z]{1,2})/A\\b", RegexOption.IGNORE_CASE)
+        val partNo = Regex("\\b([A-Z0-9]{4,5})([A-Z]{1,2})/A\\b", RegexOption.IGNORE_CASE)
         for (o in offers) {
-            val region = partNo.find(o.title)?.groupValues?.get(1)?.uppercase() ?: continue
+            val m = partNo.find(o.title) ?: continue
+            val region = m.groupValues[2].uppercase()
             o.origin = if (region == "TU") "Türkiye cihazı (TU/A)" else "Yurtdışı cihazı ($region/A) — garanti farklı olabilir"
+            if (o.kind == Kind.MATCH && o.variant.isEmpty()) o.variant = m.groupValues[1].uppercase() + region + "/A"
         }
     }
 
@@ -533,8 +567,67 @@ class MainActivity : Activity() {
         Kind.MATCH -> "eşleşme"
     }
 
-    private fun showFinal() {
+    // ---------- Ürün sayfaları: garanti ve satıcı ----------
+
+    private fun startDetails() {
         classify()
+        detailQueue.clear()
+        // En ucuz 6 eşleşmenin sayfasını aç (en çok bunlar önemli)
+        detailQueue.addAll(offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }.take(6))
+        detailIndex = 0
+        detailPhase = true
+        nextDetail()
+    }
+
+    private fun nextDetail() {
+        if (detailIndex >= detailQueue.size) {
+            detailPhase = false
+            running = false
+            web.stopLoading()
+            showFinal()
+            return
+        }
+        val o = detailQueue[detailIndex]
+        token++
+        val my = token
+        extractScheduled = false
+        status.text = "Garanti ve satıcı kontrolü ${detailIndex + 1}/${detailQueue.size}: ${o.site}…"
+        web.loadUrl(o.link)
+        handler.postDelayed({ if (my == token) detailExtract() }, 20000)
+    }
+
+    private fun detailExtract() {
+        val o = detailQueue[detailIndex]
+        val my = ++token
+        web.evaluateJavascript(detailJs) { raw ->
+            if (my != token) return@evaluateJavascript
+            try {
+                val d = JSONObject(JSONTokener(raw).nextValue() as String)
+                o.warranty = d.optString("w")
+                o.warrantyLine = d.optString("wl")
+                o.seller = d.optString("seller").trim()
+                o.sellerLine = d.optString("sl")
+            } catch (e: Exception) {
+            }
+            o.detailChecked = true
+            detailIndex++
+            handler.postDelayed({ if (my == token) nextDetail() }, 500)
+        }
+    }
+
+    /** Garanti yazısını renkli bir etikete çevirir */
+    private fun warrantyBadge(o: Offer): Pair<String, Int>? {
+        if (!o.detailChecked) return null
+        val w = o.warranty.lowercase(Locale("tr", "TR"))
+        return when {
+            w.contains("ithalatçı") -> "İthalatçı garantili" to red
+            w.contains("uluslararası") -> "Uluslararası garanti — Türkiye'de geçmeyebilir" to red
+            w.isNotEmpty() -> "Garanti: ${o.warranty}" to green
+            else -> "Garanti tipi sayfada bulunamadı" to muted
+        }
+    }
+
+    private fun showFinal() {
         results.removeAllViews()
 
         val matches = offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }
@@ -616,6 +709,8 @@ class MainActivity : Activity() {
         card.addView(label(head, 16f, ink, true))
         if (tag.isNotEmpty()) card.addView(label(tag, 12f, if (o.kind == Kind.MATCH) green else orange, true))
         if (o.origin.isNotEmpty()) card.addView(label(o.origin, 12f, if (o.origin.startsWith("Türkiye")) green else red, true))
+        warrantyBadge(o)?.let { (txt, col) -> card.addView(label(txt, 12f, col, true)) }
+        if (o.seller.isNotEmpty()) card.addView(label("Satıcı: ${o.seller}", 12f, ink))
         if (o.listPrice > o.price) {
             card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
         }
@@ -636,7 +731,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 5\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 6\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -649,8 +744,17 @@ class MainActivity : Activity() {
             report.append(" | ").append(o.site)
             if (o.variant.isNotEmpty()) report.append(" | paket ").append(o.variant)
             if (o.origin.isNotEmpty()) report.append(" | ").append(o.origin)
+            if (o.detailChecked) report.append(" | garanti: ").append(o.warranty.ifEmpty { "?" })
+                .append(" | satıcı: ").append(o.seller.ifEmpty { "?" })
             if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(countText(o.ratingCount)).append(")")
             report.append("\n  ").append(o.title).append("\n")
+        }
+
+        report.append("\nÜRÜN SAYFASI HAM SATIRLAR (garanti / satıcı)\n")
+        detailQueue.forEach { o ->
+            report.append("[").append(o.site).append(" ").append(money(o.price)).append("]\n")
+                .append("  garanti satırı: ").append(o.warrantyLine.ifEmpty { "-" }).append("\n")
+                .append("  satıcı satırı: ").append(o.sellerLine.ifEmpty { "-" }).append("\n")
         }
 
         report.append("\nŞÜPHELİ UCUZ İLANLAR\n")

@@ -112,6 +112,9 @@ class MainActivity : Activity() {
     private val detailJs = """
         (function(){
           var t = document.body ? document.body.innerText : '';
+          // Sayfanın altındaki "benzer ürünler" gibi bölümler başka ürünlere ait; garanti/satıcıyı onlardan okuma
+          var cut = t.search(/benzer ürünler|bunlar da ilgini|ilgini(zi)? çekebilir|birlikte al|önerilen ürünler|sizin için seçtik|son gezdiğin|tamamlayıcı ürünler|bu ürünü alanlar/i);
+          if (cut > 500) t = t.slice(0, cut);
           var lines = t.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
           // Üst menü ve site linkleri satıcı adı sanılmasın
           var junk = /satış yap|satıcı ol|mesajlarım|giriş yap|üye ol|kampanya|popüler|yardım|sipariş|sepet|favori/i;
@@ -132,7 +135,7 @@ class MainActivity : Activity() {
             var L = lines[i];
             var m1 = L.match(/^(?:satıcı|mağaza|satan)\s*:\s*(.{2,40})$/i);
             if (m1 && !junk.test(m1[1])) { seller = m1[1]; sline = ctx(i, 1, 2); break; }
-            if (/^(?:gönderici\s*\/\s*satıcı|satıcı|satıcı adı|satan)$/i.test(L) && lines[i + 1] && !junk.test(lines[i + 1])) {
+            if (/^(?:gönderici\s*\/\s*satıcı|satıcı|satıcı adı|satan)\s*:?$/i.test(L) && lines[i + 1] && !junk.test(lines[i + 1])) {
               seller = lines[i + 1]; sline = ctx(i, 0, 3); break;
             }
             if (/^(?:mağazaya git|satıcıya git|mağazayı ziyaret et|satıcıya sor|mağazayı takip et|takip et)$/i.test(L) && i > 0) {
@@ -297,7 +300,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 7", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 8", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -781,7 +784,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 7\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 8\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 

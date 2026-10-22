@@ -2,6 +2,7 @@ package com.erdem.fiyatavcisi
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -72,7 +73,18 @@ class MainActivity : Activity() {
         var detailPage: String = "",
     )
 
-    private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, ACCESSORY, DIFFERENT_MODEL, OTHER }
+    private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, ACCESSORY, DIFFERENT_MODEL, OTHER }
+
+    /** Ürün kimliği: ne yazılırsa yazılsın (barkod, ad, kod) aramanın dayandığı tek ürün */
+    private data class Identity(
+        val code: String,        // küçük harf paket kodu: "qp2834/31", "mtjv3tu/a"
+        val base: String,        // temel model: "qp2834", "mtjv3"
+        val label: String,       // ekranda: "QP2834/31"
+        val searchQuery: String, // sitelere sorulacak sabit arama: "Philips QP2834"
+        val sample: String = "",
+        val count: Int = 0,
+        val price: Double = 0.0,
+    )
 
     private val sites = listOf(
         Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
@@ -82,6 +94,9 @@ class MainActivity : Activity() {
         Site("Teknosa", "-p-[0-9]") { "https://www.teknosa.com/arama/?s=$it" },
         Site("N11", "urun[.]n11[.]com|n11[.]com/urun/") { "https://www.n11.com/arama?q=$it" },
     )
+
+    // Kimlik bulmak için hızlı taranan siteler (barkod ve kodla aramada en iyi sonuç verenler)
+    private val resolverSites by lazy { listOf(sites[0], sites[2], sites[1]) }
 
     // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
     private val accessoryWords = listOf(
@@ -105,6 +120,12 @@ class MainActivity : Activity() {
         maximumFractionDigits = 0
     }
     private var attempt = 0
+    private var identity: Identity? = null
+    private var userInput = ""
+    private var resolvePhase = false
+    private var activeSites: List<Site> = emptyList()
+    private val resolveLog = StringBuilder()
+    private val prefs by lazy { getSharedPreferences("kimlik", Context.MODE_PRIVATE) }
     private var detailPhase = false
     private val detailQueue = mutableListOf<Offer>()
     private var detailIndex = 0
@@ -314,7 +335,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 10", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 11", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -430,40 +451,66 @@ class MainActivity : Activity() {
 
     private fun startTest() {
         if (running) return
-        query = input.text.toString().trim()
-        if (query.isEmpty()) return
+        userInput = input.text.toString().trim()
+        if (userInput.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
         if (resultsScroll.visibility != View.VISIBLE) toggleBrowser()
         running = true
+        results.removeAllViews()
+        report.setLength(0)
+        resolveLog.setLength(0)
+        identity = null
+
+        // Bu giriş için daha önce bir ürün seçildiyse sormadan onu kullan
+        val saved = prefs.getString("q:" + norm(userInput), null)
+        if (saved != null) {
+            identity = identityFromJson(saved)
+            resolveLog.append("Kimlik hafızadan alındı.\n")
+            startSearch()
+            return
+        }
+        // 1. adım: kimlik bul
+        resolvePhase = true
+        activeSites = resolverSites
+        query = userInput
         index = 0
         offers.clear()
         siteSummary.clear()
-        results.removeAllViews()
-        report.setLength(0)
+        runNext()
+    }
+
+    /** 2. adım: 6 siteyi her zaman kimliğin sabit aramasıyla tara */
+    private fun startSearch() {
+        resolvePhase = false
+        activeSites = sites
+        query = identity?.searchQuery ?: userInput
+        index = 0
+        offers.clear()
+        siteSummary.clear()
         runNext()
     }
 
     private fun runNext() {
-        if (index >= sites.size) {
-            startDetails()
+        if (index >= activeSites.size) {
+            if (resolvePhase) finishResolve() else startDetails()
             return
         }
-        val site = sites[index]
+        val site = activeSites[index]
         token++
         val my = token
         extractScheduled = false
         httpStatus = 0
         loadError = ""
         attempt = 0
-        status.text = "${index + 1}/${sites.size}: ${site.name} taranıyor…"
+        status.text = (if (resolvePhase) "Ürün tanınıyor " else "Fiyatlar: ") + "${index + 1}/${activeSites.size}: ${site.name}…"
         val q = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
         web.loadUrl(site.url(q))
         handler.postDelayed({ if (my == token) extract() }, 25000)
     }
 
     private fun extract() {
-        val site = sites[index]
+        val site = activeSites[index]
         val my = ++token
         web.evaluateJavascript(extractJs(site.linkPattern)) { raw ->
             if (my != token) return@evaluateJavascript
@@ -532,11 +579,207 @@ class MainActivity : Activity() {
         status.text = "$name: $verdict"
     }
 
+    // ---------- Ürün kimliği ----------
+
+    private val appleCode = Regex("\\b([a-z0-9]{4,5})([a-z]{1,2})/a\\b")
+    private val genericCode = Regex("\\b([a-z]{1,4}[0-9]{3,5})(?:\\s*/\\s*([0-9]{2,3}))?\\b")
+
+    /** Başlıktaki paket kodları: (paket kodu, temel model) çiftleri */
+    private fun codesIn(title: String): List<Pair<String, String>> {
+        val t = title.lowercase(Locale("tr", "TR"))
+        val out = mutableListOf<Pair<String, String>>()
+        appleCode.findAll(t).forEach { m ->
+            val b = m.groupValues[1]
+            if (b.any { it.isDigit() } && b.any { it.isLetter() }) out.add("$b${m.groupValues[2]}/a" to b)
+        }
+        genericCode.findAll(t).forEach { m ->
+            val b = m.groupValues[1]
+            val v = m.groupValues[2]
+            out.add((if (v.isNotEmpty()) "$b/$v" else b) to b)
+        }
+        return out
+    }
+
+    /** Aramadaki zorunlu kelimeler; "pro 2" gibi sayıları önceki kelimeyle birleştirir */
+    private fun requiredWords(q: String): List<String> {
+        val tokens = q.split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
+        val words = mutableListOf<String>()
+        tokens.forEachIndexed { i, t ->
+            when {
+                t.all { it.isDigit() } && i > 0 -> words.add(tokens[i - 1] + t)
+                t.length >= 3 -> words.add(t)
+            }
+        }
+        return words
+    }
+
+    private fun inputType(s: String): String {
+        val c = s.replace(" ", "")
+        return when {
+            c.length in 8..14 && c.all { it.isDigit() } -> "barkod"
+            codesIn(s).isNotEmpty() -> "kod"
+            else -> "ad"
+        }
+    }
+
+    /** Başlıktan sitelere sorulacak sade ürün adı: kodu çıkarıp ilk 5 kelime */
+    private fun familyQuery(title: String, base: String): String {
+        val t = title.replace(Regex("(?i)\\b$base[a-z]{0,2}/a\\b"), " ")
+        return t.split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotBlank() }.take(5).joinToString(" ")
+    }
+
+    private fun finishResolve() {
+        resolvePhase = false
+        val cands = buildCandidates()
+        resolveLog.append("Giriş: ").append(userInput).append(" (").append(inputType(userInput)).append(")\n")
+        siteSummary.forEach { resolveLog.append("  tanıma — ").append(it).append("\n") }
+        cands.forEach {
+            resolveLog.append("  aday: ").append(it.label).append(" · ").append(it.count).append(" ilan · ör: ")
+                .append(it.sample.take(70)).append("\n")
+        }
+        when {
+            cands.isEmpty() -> {
+                resolveLog.append("Kimlik bulunamadı; yazılan kelimelerle arandı.\n")
+                startSearch()
+            }
+            cands.size == 1 || (inputType(userInput) == "barkod" && cands[0].count >= 2 * cands[1].count) -> {
+                chooseIdentity(cands[0])
+            }
+            else -> showChooser(cands)
+        }
+    }
+
+    private fun buildCandidates(): List<Identity> {
+        val type = inputType(userInput)
+        val need = requiredWords(userInput)
+        val inputCodes = codesIn(userInput).flatMap { listOf(it.first, it.second) }.toSet()
+        val count = mutableMapOf<String, Int>()
+        val baseOf = mutableMapOf<String, String>()
+        val titles = mutableMapOf<String, MutableList<String>>()
+        val prices = mutableMapOf<String, MutableList<Double>>()
+        val perSite = mutableMapOf<String, Int>()
+        for (o in offers) {
+            val t = o.title.lowercase(Locale("tr", "TR"))
+            if (accessoryWords.any { t.contains(it) }) continue
+            val nt = norm(o.title)
+            val codes = codesIn(o.title)
+            val pick = when (type) {
+                "ad" -> if (need.isNotEmpty() && need.all { nt.contains(it) }) codes.firstOrNull() else null
+                "kod" -> codes.firstOrNull { it.first in inputCodes || it.second in inputCodes }
+                else -> {
+                    // Barkod aramasında sitenin ilk birkaç sonucu yeterli; gerisi "benzer ürün" olabilir
+                    val n = (perSite[o.site] ?: 0) + 1
+                    perSite[o.site] = n
+                    if (n <= 5) codes.firstOrNull() else null
+                }
+            } ?: continue
+            count[pick.first] = (count[pick.first] ?: 0) + 1
+            baseOf[pick.first] = pick.second
+            titles.getOrPut(pick.first) { mutableListOf() }.add(o.title)
+            prices.getOrPut(pick.first) { mutableListOf() }.add(o.price)
+        }
+        // Paketi yazılmamış kod (QP2834), aynı modelin paketli hali (QP2834/31) varsa ayrı aday olmasın
+        val withVariant = count.keys.filter { it != baseOf[it] }.map { baseOf[it] }.toSet()
+        val keys = count.keys.filter { !(it == baseOf[it] && it in withVariant) }
+        val top = keys.maxOfOrNull { count[it] ?: 0 } ?: return emptyList()
+        return keys.filter { (count[it] ?: 0) * 4 >= top }
+            .sortedWith(compareByDescending<String> { count[it] ?: 0 }.thenBy { prices[it]?.minOrNull() ?: 0.0 })
+            .take(5)
+            .map { code ->
+                val base = baseOf[code] ?: code
+                val fams = titles[code].orEmpty().map { familyQuery(it, base) }
+                val fam = fams.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key.orEmpty()
+                val apple = code.endsWith("/a")
+                val brand = fam.split(" ").firstOrNull().orEmpty()
+                Identity(
+                    code = code,
+                    base = base,
+                    label = code.uppercase(),
+                    searchQuery = if (apple) fam else "$brand ${base.uppercase()}".trim(),
+                    sample = titles[code].orEmpty().minByOrNull { it.length }.orEmpty(),
+                    count = count[code] ?: 0,
+                    price = prices[code].orEmpty().minOrNull() ?: 0.0,
+                )
+            }
+    }
+
+    private fun showChooser(cands: List<Identity>) {
+        status.text = "Birden fazla ürün bulundu, hangisini kastettin?"
+        val items = cands.map { "${it.label}\n${it.sample.take(80)}\n${it.count} ilan · ${money(it.price)}'den başlıyor" } +
+            "Hepsini göster (paket ayırmadan)"
+        AlertDialog.Builder(this)
+            .setTitle("Hangisini kastettin?")
+            .setItems(items.toTypedArray<CharSequence>()) { _, which ->
+                if (which < cands.size) chooseIdentity(cands[which]) else {
+                    resolveLog.append("Paket seçilmedi; yazılan kelimelerle arandı.\n")
+                    startSearch()
+                }
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun chooseIdentity(id: Identity) {
+        identity = id
+        // Aynı giriş bir daha yazılınca sormadan bu ürünle arasın
+        prefs.edit().putString("q:" + norm(userInput), identityToJson(id)).apply()
+        resolveLog.append("Seçilen ürün: ").append(id.label).append(" · arama: ").append(id.searchQuery).append("\n")
+        startSearch()
+    }
+
+    private fun identityToJson(id: Identity) = JSONObject().apply {
+        put("code", id.code); put("base", id.base); put("label", id.label)
+        put("q", id.searchQuery); put("sample", id.sample)
+    }.toString()
+
+    private fun identityFromJson(s: String): Identity? = try {
+        val j = JSONObject(s)
+        Identity(j.getString("code"), j.getString("base"), j.getString("label"), j.getString("q"), j.optString("sample"))
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun forgetIdentity() {
+        prefs.edit().remove("q:" + norm(userInput)).apply()
+        input.setText(userInput)
+        startTest()
+    }
+
     // ---------- Eşleştirme ----------
 
     private fun norm(s: String) = s.lowercase(Locale("tr", "TR")).replace(Regex("[^a-z0-9çğıöşü]"), "")
 
     private fun classify() {
+        val id = identity
+        if (id != null) classifyByIdentity(id) else classifyByWords()
+        markSuspiciousAndOrigin()
+    }
+
+    /** Kimlikle eşleştirme: aynı paket kodu = eşleşme; aynı model başka paket = ayrı başlık */
+    private fun classifyByIdentity(id: Identity) {
+        val nameWords = requiredWords(id.searchQuery).filter { it != id.base }
+        for (o in offers) {
+            val t = o.title.lowercase(Locale("tr", "TR"))
+            val nt = norm(o.title)
+            val codes = codesIn(o.title)
+            val sameBase = codes.filter { it.second == id.base }
+            o.kind = when {
+                accessoryWords.any { t.contains(it) } -> Kind.ACCESSORY
+                codes.any { it.first == id.code } -> { o.variant = id.label; Kind.MATCH }
+                sameBase.any { it.first != it.second } -> {
+                    o.otherModel = sameBase.first { it.first != it.second }.first.uppercase()
+                    Kind.OTHER_PACKAGE
+                }
+                // Model yazıyor ama paket kodu yazmıyor: muhtemelen aynı, kontrol edilmeli
+                sameBase.isNotEmpty() -> Kind.POSSIBLE
+                codes.isNotEmpty() -> { o.otherModel = codes.first().first.uppercase(); Kind.DIFFERENT_MODEL }
+                nameWords.isNotEmpty() && nameWords.all { nt.contains(it) } -> Kind.POSSIBLE
+                else -> Kind.OTHER
+            }
+        }
+    }
+
+    private fun classifyByWords() {
         val tokens = query.lowercase(Locale("tr", "TR")).split(Regex("\\s+")).filter { it.isNotBlank() }
         // Model kodu: hem harf hem rakam içeren kelime (ör. qp2834)
         val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
@@ -577,6 +820,9 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun markSuspiciousAndOrigin() {
         // Referans fiyat: en çok değerlendirilmiş eşleşme (çok satan gerçek ürün). Yoksa medyan.
         val matched = offers.filter { it.kind == Kind.MATCH }
         val ref = matched.filter { countNum(it.ratingCount) >= 30 }.maxByOrNull { countNum(it.ratingCount) }?.price
@@ -618,7 +864,8 @@ class MainActivity : Activity() {
         Kind.ACCESSORY -> "aksesuar"
         Kind.DIFFERENT_MODEL -> "farklı model (${o.otherModel})"
         Kind.OTHER -> "farklı ürün"
-        Kind.POSSIBLE -> "olası eşleşme (model kodu yazmıyor)"
+        Kind.POSSIBLE -> "olası eşleşme (paket/model kodu yazmıyor)"
+        Kind.OTHER_PACKAGE -> "aynı modelin başka paketi (${o.otherModel})"
         Kind.SUSPICIOUS -> "çok ucuz — kılıf, taklit ya da yanlış ilan olabilir"
         Kind.MATCH -> "eşleşme"
     }
@@ -697,6 +944,16 @@ class MainActivity : Activity() {
 
     private fun showFinal() {
         results.removeAllViews()
+        val id = identity
+        results.addView(label(
+            if (id != null) "Ürün: ${id.label} · aranan: ${id.searchQuery}\nYanlış ürünse değiştirmek için dokun"
+            else "Ürün kimliği yok, yazdığın kelimelerle arandı. Tekrar sormak için dokun",
+            13f, ink, true
+        ).apply {
+            setBackgroundColor(Color.parseColor("#FFF6DD"))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setOnClickListener { forgetIdentity() }
+        })
 
         val matches = offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }
         val others = offers.filter { it.kind != Kind.MATCH }.sortedBy { it.price }
@@ -734,8 +991,15 @@ class MainActivity : Activity() {
             sectionTitle("Olası eşleşmeler — model kodu yazmıyor, kontrol et", orange)
             possibles.forEach { offerRow(it, false) }
         }
+        val otherPackages = others.filter { it.kind == Kind.OTHER_PACKAGE }
+        if (otherPackages.isNotEmpty()) {
+            sectionTitle("Aynı modelin diğer paketleri — içerik/garanti farklı", orange)
+            otherPackages.forEach { offerRow(it, false) }
+        }
         val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
-        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }
+        val rest = others.filter {
+            it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS && it.kind != Kind.OTHER_PACKAGE
+        }
         if (diffModels.isNotEmpty()) {
             sectionTitle("Aynı aileden farklı modeller", orange)
             diffModels.forEach { offerRow(it, false) }
@@ -800,7 +1064,9 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 10\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 11\nGiriş: ").append(userInput)
+            .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
+            .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -842,7 +1108,7 @@ class MainActivity : Activity() {
         }
 
         report.append("\nAKSESUAR / FARKLI\n")
-        others.filter { it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }.take(15).forEach { o ->
+        others.filter { it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }.take(20).forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
                 .append(kindLabel(o)).append("\n  ").append(o.title).append("\n")
         }

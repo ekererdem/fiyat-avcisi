@@ -364,7 +364,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 16", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 17", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -993,7 +993,7 @@ class MainActivity : Activity() {
     private fun classifyByWords() {
         val tokens = query.lowercase(Locale("tr", "TR")).split(Regex("\\s+")).filter { it.isNotBlank() }
         // Model kodu: hem harf hem rakam içeren kelime (ör. qp2834)
-        val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
+        val modelTokens = codesIn(query).map { it.second }.distinct()
         val required = modelTokens.ifEmpty { requiredWords(query) }
 
         val modelCode = Regex("\\b[a-z]{1,4}[0-9]{3,5}\\b")
@@ -1070,11 +1070,15 @@ class MainActivity : Activity() {
         return s.replace(".", "").replace(",", "").toDoubleOrNull() ?: 0.0
     }
 
-    /** Paket çarpanı: "x 6", "6 kutu", "6'lı paket" */
-    private fun packMultiplier(t: String): Double {
-        val m = Regex("x\\s*([0-9]+)|([0-9]+)\\s*(?:kutu|paket)|([0-9]+)\\s*'?\\s*l[ıiuü]\\s*paket").find(t) ?: return 1.0
+    /** Paket çarpanı ("x 6", "6 kutu", "6'lı paket"); sadece miktardan SONRA yazılmışsa uygulanır.
+     *  "10 Kutu 1.000 Adet" gibi toplam yazılan ilanlarda tekrar çarpılmaz. */
+    private fun packMultiplier(t: String, after: Int): Double {
+        val m = Regex("x\\s*([0-9]+)|([0-9]+)\\s*(?:kutu|paket)|([0-9]+)\\s*'?\\s*l[ıiuü]\\s*paket").findAll(t)
+            .firstOrNull { it.range.first > after } ?: return 1.0
         return (m.groupValues[1].ifEmpty { m.groupValues[2] }.ifEmpty { m.groupValues[3] }).toDoubleOrNull() ?: 1.0
     }
+
+    private fun numberOf(s: String) = s.replace(".", "").replace(",", ".").toDoubleOrNull() ?: 0.0
 
     /** Birim fiyat: kg/litre/adet başına. Başlıkta miktar yoksa null */
     private fun unitPrice(o: Offer): Pair<Double, String>? {
@@ -1087,11 +1091,11 @@ class MainActivity : Activity() {
                 "ml" -> v / 1000 to "L"
                 else -> v to "L"
             }
-            if (amount > 0) return o.price / (amount * packMultiplier(t)) to unit
+            if (amount > 0) return o.price / (amount * packMultiplier(t, m.range.last)) to unit
         }
-        Regex("([0-9]+)\\s*(?:adet|'?\\s?l[iıuü]\\b)").find(t)?.let { m ->
-            val n = m.groupValues[1].toDoubleOrNull() ?: 0.0
-            if (n > 1) return o.price / (n * packMultiplier(t)) to "adet"
+        Regex("([0-9]{1,3}(?:\\.[0-9]{3})+|[0-9]+)\\s*(?:adet|'?\\s?l[iıuü]\\b)").find(t)?.let { m ->
+            val n = numberOf(m.groupValues[1])
+            if (n > 1) return o.price / (n * packMultiplier(t, m.range.last)) to "adet"
         }
         return null
     }
@@ -1330,7 +1334,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 16\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 17\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

@@ -69,6 +69,7 @@ class MainActivity : Activity() {
         var warrantyType: String = "",
         var warrantyDuration: String = "",
         var sellerScore: String = "",
+        var detailPage: String = "",
     )
 
     private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -112,12 +113,15 @@ class MainActivity : Activity() {
     private val detailJs = """
         (function(){
           var t = document.body ? document.body.innerText : '';
+          var fullLen = t.length;
           // Sayfanın altındaki "benzer ürünler" gibi bölümler başka ürünlere ait; garanti/satıcıyı onlardan okuma
           var cut = t.search(/benzer ürünler|bunlar da ilgini|ilgini(zi)? çekebilir|birlikte al|önerilen ürünler|sizin için seçtik|son gezdiğin|tamamlayıcı ürünler|bu ürünü alanlar/i);
           if (cut > 500) t = t.slice(0, cut);
           var lines = t.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
           // Üst menü ve site linkleri satıcı adı sanılmasın
           var junk = /satış yap|satıcı ol|mesajlarım|giriş yap|üye ol|kampanya|popüler|yardım|sipariş|sepet|favori/i;
+          // Satıcı adının çevresindeki buton ve sayaçlar (ad sanılmasın)
+          var notName = /mağazaya sor|satıcıya sor|hızlı gönderim|takip|kazan|detayları gör|takipçi|değerlendirme|soru|ürün|kargo|gönderim/i;
           function ctx(i, b, a){ return lines.slice(Math.max(0, i - b), i + a + 1).join(' | ').slice(0, 240); }
 
           // Garanti: kesin ifade, "Garanti Tipi: ..." özelliği ve "Garanti Süresi: ..." özelliği
@@ -139,11 +143,11 @@ class MainActivity : Activity() {
               seller = lines[i + 1]; sline = ctx(i, 0, 3); break;
             }
             if (/^(?:mağazaya git|satıcıya git|mağazayı ziyaret et|satıcıya sor|mağazayı takip et|takip et)$/i.test(L) && i > 0) {
-              for (var k = i - 1; k >= Math.max(0, i - 3); k--) {
+              for (var k = i - 1; k >= Math.max(0, i - 5); k--) {
                 var c = lines[k];
-                if (c.length >= 2 && c.length <= 40 && !/^[\d.,\s]+$/.test(c) && !junk.test(c)) { seller = c; break; }
+                if (c.length >= 2 && c.length <= 40 && !/^[\d.,\s]+[BbKk]?$/.test(c) && !junk.test(c) && !notName.test(c)) { seller = c; break; }
               }
-              sline = ctx(i, 4, 1);
+              sline = ctx(i, 5, 1);
               if (seller) break;
             }
           }
@@ -153,7 +157,8 @@ class MainActivity : Activity() {
             if (/mağazaya git|satıcı puanı|mağaza puanı|satıcıya sor|gönderici/i.test(lines[j])) dbg.push(ctx(j, 3, 1));
           }
           return JSON.stringify({ w: wm ? wm[1] : '', wt: wt ? wt[1].trim() : '', wd: wd ? wd[1].trim() : '',
-            seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 320) });
+            seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 320),
+            page: document.title.slice(0, 80) + ' | metin ' + fullLen + ' karakter | ' + location.href.slice(0, 90) });
         })()
     """.trimIndent()
 
@@ -300,7 +305,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 8", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 9", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -652,7 +657,9 @@ class MainActivity : Activity() {
                 o.warrantyType = d.optString("wt")
                 o.warrantyDuration = d.optString("wd")
                 o.sellerScore = d.optString("score")
+                o.detailPage = d.optString("page")
             } catch (e: Exception) {
+                o.detailPage = "okunamadı: " + raw.take(80)
             }
             o.detailChecked = true
             detailIndex++
@@ -784,7 +791,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 8\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 9\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -810,6 +817,7 @@ class MainActivity : Activity() {
             report.append("[").append(o.site).append(" ").append(money(o.price)).append("]\n")
                 .append("  garanti satırı: ").append(o.warrantyLine.ifEmpty { "-" }).append("\n")
                 .append("  satıcı satırı: ").append(o.sellerLine.ifEmpty { "-" }).append("\n")
+                .append("  sayfa: ").append(o.detailPage.ifEmpty { "-" }).append("\n")
         }
 
         report.append("\nŞÜPHELİ UCUZ İLANLAR\n")

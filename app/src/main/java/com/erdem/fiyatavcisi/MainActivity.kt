@@ -60,9 +60,10 @@ class MainActivity : Activity() {
         var kind: Kind = Kind.OTHER,
         var variant: String = "",
         var otherModel: String = "",
+        var origin: String = "",
     )
 
-    private enum class Kind { MATCH, POSSIBLE, ACCESSORY, DIFFERENT_MODEL, OTHER }
+    private enum class Kind { MATCH, POSSIBLE, SUSPICIOUS, ACCESSORY, DIFFERENT_MODEL, OTHER }
 
     private val sites = listOf(
         Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
@@ -75,7 +76,7 @@ class MainActivity : Activity() {
 
     // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
     private val accessoryWords = listOf(
-        "uyumlu", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
+        "uyumlu", "kapak", "kulaklık ucu", "uçları", "askı", "temizleme", "kalemi", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
         "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
     )
 
@@ -158,7 +159,7 @@ class MainActivity : Activity() {
             if (sampleLinks.length < 8 && tx.length > 20 && sampleLinks.indexOf(a.href) < 0) sampleLinks.push(a.href.slice(0, 120));
           });
           var seen = {}, cards = [];
-          for (var i = 0; i < anchors.length && cards.length < 20; i++) {
+          for (var i = 0; i < anchors.length && cards.length < 40; i++) {
             var a = anchors[i], key = keyOf(a.href);
             if (seen[key]) continue;
             var el = a;
@@ -181,7 +182,6 @@ class MainActivity : Activity() {
             var price = Math.min.apply(null, ok);
 
             var cands = [a.getAttribute('title') || '', a.getAttribute('aria-label') || ''];
-            var img = el.querySelector('img[alt]'); if (img) cands.push(img.getAttribute('alt') || '');
             var h = el.querySelector('h2,h3,h4'); if (h) cands.push(h.innerText || '');
             text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
             var title = '';
@@ -189,8 +189,10 @@ class MainActivity : Activity() {
               c = (c || '').replace(/\s+/g, ' ').trim();
               if (c.length >= 10 && c.length <= 250 && c.length > title.length) title = c;
             });
+            // Resim açıklaması (alt) bazen "siyah zemin üzerinde..." gibi tarif olur; sadece başka ad yoksa kullan
+            if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
 
-            var rm = text.match(/(?:^|\s)([1-5][.,]\d)(?=\s|\()/);
+            var rm = text.match(/(?:^|\s)([1-4][.,]\d|5[.,]0)(?=\s|\()/);
             var cm = text.match(/\((\d{1,3}(?:[.,]\d{1,3})?\s?B|\d{1,3}(?:\.\d{3})+|\d{1,6})\)/);
             cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
@@ -237,7 +239,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 4", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 5", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -450,7 +452,16 @@ class MainActivity : Activity() {
         val tokens = query.lowercase(Locale("tr", "TR")).split(Regex("\\s+")).filter { it.isNotBlank() }
         // Model kodu: hem harf hem rakam içeren kelime (ör. qp2834)
         val modelTokens = tokens.filter { t -> t.any { it.isDigit() } && t.any { it.isLetter() } }.map { norm(it) }
-        val required = modelTokens.ifEmpty { tokens.filter { it.length >= 3 }.map { norm(it) } }
+        val required = modelTokens.ifEmpty {
+            val words = mutableListOf<String>()
+            tokens.forEachIndexed { i, t ->
+                when {
+                    t.all { it.isDigit() } && i > 0 -> words.add(norm(tokens[i - 1] + t)) // "pro"+"2" -> "pro2"
+                    t.length >= 3 -> words.add(norm(t))
+                }
+            }
+            words
+        }
 
         val modelCode = Regex("\\b[a-z]{1,4}[0-9]{3,5}\\b")
         // Model kodu dışındaki kelimeler (ör. philips, oneblade): kodu yazmayan ilanları yakalamak için
@@ -478,11 +489,20 @@ class MainActivity : Activity() {
                 }
             }
         }
-        // Eşleşenlerin medyanının çok altında kalan "eşleşme" büyük ihtimalle aksesuardır
-        val matchPrices = offers.filter { it.kind == Kind.MATCH }.map { it.price }.sorted()
-        if (matchPrices.size >= 3) {
-            val median = matchPrices[matchPrices.size / 2]
-            offers.filter { it.kind == Kind.MATCH && it.price < median * 0.35 }.forEach { it.kind = Kind.ACCESSORY }
+        // Referans fiyat: en çok değerlendirilmiş eşleşme (çok satan gerçek ürün). Yoksa medyan.
+        val matched = offers.filter { it.kind == Kind.MATCH }
+        val ref = matched.filter { countNum(it.ratingCount) >= 30 }.maxByOrNull { countNum(it.ratingCount) }?.price
+            ?: matched.map { it.price }.sorted().let { if (it.size >= 3) it[it.size / 2] else null }
+        if (ref != null) {
+            // Gerçek ürünün %40'ından ucuz "eşleşme": kılıf, taklit ya da yanlış ilan olabilir
+            matched.filter { it.price < ref * 0.4 }.forEach { it.kind = Kind.SUSPICIOUS }
+        }
+
+        // Apple gibi markaların parça numarasındaki bölge kodu: TU/A = Türkiye, diğerleri yurtdışı cihazı
+        val partNo = Regex("\\b[A-Z0-9]{4,5}([A-Z]{1,2})/A\\b", RegexOption.IGNORE_CASE)
+        for (o in offers) {
+            val region = partNo.find(o.title)?.groupValues?.get(1)?.uppercase() ?: continue
+            o.origin = if (region == "TU") "Türkiye cihazı (TU/A)" else "Yurtdışı cihazı ($region/A) — garanti farklı olabilir"
         }
     }
 
@@ -498,11 +518,18 @@ class MainActivity : Activity() {
         return tlWhole.format(v * 1000)
     }
 
+    private fun countNum(s: String): Double {
+        if (s.isBlank()) return 0.0
+        Regex("([0-9]+(?:[.,][0-9]+)?)\\s?B").find(s)?.let { return (it.groupValues[1].replace(",", ".").toDoubleOrNull() ?: 0.0) * 1000 }
+        return s.replace(".", "").replace(",", "").toDoubleOrNull() ?: 0.0
+    }
+
     private fun kindLabel(o: Offer) = when (o.kind) {
         Kind.ACCESSORY -> "aksesuar"
         Kind.DIFFERENT_MODEL -> "farklı model (${o.otherModel})"
         Kind.OTHER -> "farklı ürün"
         Kind.POSSIBLE -> "olası eşleşme (model kodu yazmıyor)"
+        Kind.SUSPICIOUS -> "çok ucuz — kılıf, taklit ya da yanlış ilan olabilir"
         Kind.MATCH -> "eşleşme"
     }
 
@@ -536,13 +563,18 @@ class MainActivity : Activity() {
             sectionTitle("Eşleşen ürünler", green)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        val suspicious = others.filter { it.kind == Kind.SUSPICIOUS }
+        if (suspicious.isNotEmpty()) {
+            sectionTitle("Şüpheli ucuz ilanlar — gerçek ürünün yarısından ucuz", red)
+            suspicious.forEach { offerRow(it, false) }
+        }
         val possibles = others.filter { it.kind == Kind.POSSIBLE }
         if (possibles.isNotEmpty()) {
             sectionTitle("Olası eşleşmeler — model kodu yazmıyor, kontrol et", orange)
             possibles.forEach { offerRow(it, false) }
         }
         val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
-        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE }
+        val rest = others.filter { it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }
         if (diffModels.isNotEmpty()) {
             sectionTitle("Aynı aileden farklı modeller", orange)
             diffModels.forEach { offerRow(it, false) }
@@ -583,6 +615,7 @@ class MainActivity : Activity() {
         }
         card.addView(label(head, 16f, ink, true))
         if (tag.isNotEmpty()) card.addView(label(tag, 12f, if (o.kind == Kind.MATCH) green else orange, true))
+        if (o.origin.isNotEmpty()) card.addView(label(o.origin, 12f, if (o.origin.startsWith("Türkiye")) green else red, true))
         if (o.listPrice > o.price) {
             card.addView(label("Liste fiyatı ${money(o.listPrice)}", 12f, muted))
         }
@@ -603,7 +636,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 4\nArama: ").append(query).append("\n\n")
+        report.append("FİYAT AVCISI · DENEME 5\nArama: ").append(query).append("\n\n")
         report.append("SİTE DURUMU\n")
         siteSummary.forEach { report.append("- ").append(it).append("\n") }
 
@@ -615,9 +648,15 @@ class MainActivity : Activity() {
             if (o.listPrice > o.price) report.append(" (liste ").append(money(o.listPrice)).append(")")
             report.append(" | ").append(o.site)
             if (o.variant.isNotEmpty()) report.append(" | paket ").append(o.variant)
+            if (o.origin.isNotEmpty()) report.append(" | ").append(o.origin)
             if (o.rating.isNotEmpty()) report.append(" | puan ").append(o.rating).append(" (").append(countText(o.ratingCount)).append(")")
             report.append("\n  ").append(o.title).append("\n")
         }
+
+        report.append("\nŞÜPHELİ UCUZ İLANLAR\n")
+        val susp = others.filter { it.kind == Kind.SUSPICIOUS }
+        if (susp.isEmpty()) report.append("(yok)\n")
+        susp.forEach { o -> report.append("- ").append(money(o.price)).append(" | ").append(o.site).append("\n  ").append(o.title).append("\n") }
 
         report.append("\nOLASI EŞLEŞMELER (model kodu yazmıyor)\n")
         val possibles = others.filter { it.kind == Kind.POSSIBLE }
@@ -627,7 +666,7 @@ class MainActivity : Activity() {
         }
 
         report.append("\nAKSESUAR / FARKLI\n")
-        others.filter { it.kind != Kind.POSSIBLE }.take(20).forEach { o ->
+        others.filter { it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS }.take(15).forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ")
                 .append(kindLabel(o)).append("\n  ").append(o.title).append("\n")
         }

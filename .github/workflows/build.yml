@@ -1,0 +1,36 @@
+name: APK derle
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Derle
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: APK'yı yayınla
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk FiyatAvcisi-test.apk
+          gh release create "test-${{ github.run_number }}" FiyatAvcisi-test.apk \
+            --title "Deneme ${{ github.run_number }}" \
+            --notes "Okuma testi APK'sı" --latest

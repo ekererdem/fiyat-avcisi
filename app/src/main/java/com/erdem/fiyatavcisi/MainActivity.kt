@@ -249,7 +249,12 @@ class MainActivity : Activity() {
           for (var w = 0; w < words.length; w++) { if (low.indexOf(words[w]) >= 0) { hit = words[w]; break; } }
           // Site "bulunamadı" diyorsa altındaki öneri/popüler ürünleri sonuç sanma
           var head = low.slice(0, 5000);
-          var nores = /sonuç bulunamadı|ürün bulunamadı|bulamadık|eşleşen (bir )?(ürün|sonuç) (bulunamadı|yok)|için sonuç yok|sonuç yok|(^|[^0-9])0 (ürün|sonuç)/.test(head);
+          // (Sepet/favori kutusundaki "ürün bulunamadı" yazıları sayılmaz)
+          var noresRe = /sonuç bulunamadı|ürün bulunamadı|bulamadık|sonuç bulunmamaktadır|ürün bulunmamaktadır|sonuç bulunmadı|eşleşen (bir )?(ürün|sonuç) (bulunamadı|yok)|için sonuç yok|(^|[^0-9])0 (ürün|sonuç)/g;
+          var nores = false, nm;
+          while ((nm = noresRe.exec(head))) {
+            if (!/sepet|favori|liste/.test(head.slice(Math.max(0, nm.index - 40), nm.index))) { nores = true; break; }
+          }
           if (nores) return JSON.stringify({ title: document.title, url: location.href, block: hit, noResults: true,
             anchors: 0, links: document.querySelectorAll('a[href]').length, cards: [] });
 
@@ -358,7 +363,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 14", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 15", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -583,6 +588,19 @@ class MainActivity : Activity() {
     private fun collect(name: String, d: JSONObject?) {
         val cards = d?.optJSONArray("cards")
         val count = cards?.length() ?: 0
+        val isBarcode = query.replace(" ", "").let { q -> q.length in 8..14 && q.all { it.isDigit() } }
+        if (count > 0 && !isBarcode) {
+            val words = requiredWords(query) + codesIn(query).map { it.second }
+            val anyRelevant = words.isEmpty() || (0 until count).any { i ->
+                val nt = norm(cards!!.getJSONObject(i).optString("t"))
+                words.any { nt.contains(it) }
+            }
+            if (!anyRelevant) {
+                siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor)")
+                status.text = "$name: sonuç yok"
+                return
+            }
+        }
         for (i in 0 until count) {
             val c = cards!!.getJSONObject(i)
             offers.add(
@@ -718,19 +736,39 @@ class MainActivity : Activity() {
     private val googleJs = """
         (function(){
           var t = [];
-          document.querySelectorAll('h3').forEach(function(h){ var s = (h.innerText || '').trim(); if (s.length > 5) t.push(s); });
-          return JSON.stringify({ titles: t.slice(0, 8), page: document.title });
+          function add(x){ x = (x || '').replace(/\s+/g, ' ').trim(); if (x.length > 8 && x.length < 200 && t.indexOf(x) < 0) t.push(x); }
+          document.querySelectorAll('h3, h2, [role="heading"]').forEach(function(h){ add(h.innerText); });
+          if (t.length < 2) {
+            document.querySelectorAll('a[href]').forEach(function(a){
+              var host = a.host || '';
+              if (host && host.indexOf('google') < 0 && host.indexOf('bing') < 0 && host.indexOf('microsoft') < 0) add(a.innerText);
+            });
+          }
+          var body = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 200);
+          return JSON.stringify({ titles: t.slice(0, 10), page: document.title, body: body });
         })()
     """.trimIndent()
 
+    private val engines = listOf(
+        "Google" to "https://www.google.com/search?hl=tr&gl=tr&q=",
+        "Bing" to "https://www.bing.com/search?setlang=tr&cc=TR&q=",
+    )
+    private var engineIndex = 0
+
     private fun googleLookup() {
         googleTried = true
+        engineIndex = 0
+        loadEngine()
+    }
+
+    private fun loadEngine() {
         googlePhase = true
         token++
         val my = token
         extractScheduled = false
-        status.text = "Barkod sitelerde yok, ürünün adı Google'dan öğreniliyor…"
-        web.loadUrl("https://www.google.com/search?hl=tr&q=" + URLEncoder.encode(userInput.replace(" ", ""), "UTF-8"))
+        val (engine, url) = engines[engineIndex]
+        status.text = "Barkod sitelerde yok, ürünün adı $engine'dan öğreniliyor…"
+        web.loadUrl(url + URLEncoder.encode(userInput.replace(" ", ""), "UTF-8"))
         handler.postDelayed({ if (my == token) googleExtract() }, 20000)
     }
 
@@ -739,18 +777,27 @@ class MainActivity : Activity() {
         web.evaluateJavascript(googleJs) { raw ->
             if (my != token) return@evaluateJavascript
             googlePhase = false
+            var pageInfo = ""
             val titles = try {
-                val a = JSONObject(JSONTokener(raw).nextValue() as String).optJSONArray("titles")
+                val d = JSONObject(JSONTokener(raw).nextValue() as String)
+                pageInfo = d.optString("page") + " | " + d.optString("body")
+                val a = d.optJSONArray("titles")
                 (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
             } catch (e: Exception) {
                 emptyList()
             }
-            resolveLog.append("Google sonuçları:\n")
-            titles.take(5).forEach { resolveLog.append("  · ").append(it.take(90)).append("\n") }
+            val engine = engines[engineIndex].first
+            resolveLog.append(engine).append(" sonuçları:\n")
+            titles.take(6).forEach { resolveLog.append("  · ").append(it.take(90)).append("\n") }
             val name = barcodeName(titles)
             if (name.isEmpty()) {
-                resolveLog.append("Google'dan ürün adı çıkarılamadı.\n")
-                startSearch()
+                resolveLog.append("  ").append(engine).append("'dan ad çıkarılamadı. Sayfa: ").append(pageInfo.take(160)).append("\n")
+                if (engineIndex + 1 < engines.size) {
+                    engineIndex++
+                    loadEngine()
+                } else {
+                    startSearch()
+                }
                 return@evaluateJavascript
             }
             resolveLog.append("Barkoddan bulunan ad: ").append(name).append("\n")
@@ -775,6 +822,10 @@ class MainActivity : Activity() {
                 .replace(Regex("[0-9]{8,14}"), " ")
                 .replace(Regex("\\s+"), " ").trim()
         }.filter { it.length >= 8 && it.any { c -> c.isLetter() } }
+            .filterNot {
+                Regex("(?i)^(görseller|videolar|diğer sorular|ilgili aramalar|haberler|alışveriş|harita|tümü|sonuçlar|" +
+                    "web sonuçları|people also ask|images|videos|related searches|news|shopping)").containsMatchIn(it)
+            }
         if (cleaned.isEmpty()) return ""
         // İlk 3 kelimesi en çok tekrar eden başlık daha güvenilir
         val key = { s: String -> s.lowercase(Locale("tr", "TR")).split(" ").take(3).joinToString(" ") }
@@ -1257,7 +1308,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 14\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 15\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

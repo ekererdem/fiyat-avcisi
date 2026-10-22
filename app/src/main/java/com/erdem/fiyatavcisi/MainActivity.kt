@@ -128,6 +128,7 @@ class MainActivity : Activity() {
     private var resolveType = ""     // barkod | kod | ad
     private var resolveQuery = ""    // kimlik aranırken kullanılan yazı (barkoddan bulunan ad olabilir)
     private var googleTried = false
+    private var simpleTried = false   // bu sitede sade arama denendi mi
     private var googlePhase = false
     private var activeSites: List<Site> = emptyList()
     private val resolveLog = StringBuilder()
@@ -363,7 +364,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 15", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 16", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -540,6 +541,7 @@ class MainActivity : Activity() {
         httpStatus = 0
         loadError = ""
         attempt = 0
+        simpleTried = false
         status.text = (if (resolvePhase) "Ürün tanınıyor " else "Fiyatlar: ") + "${index + 1}/${activeSites.size}: ${site.name}…"
         val q = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
         web.loadUrl(site.url(q))
@@ -558,6 +560,17 @@ class MainActivity : Activity() {
             }
             val found = data?.optJSONArray("cards")?.length() ?: 0
             if (data?.optBoolean("noResults") == true) {
+                // Uzun aramada site tüm kelimeleri şart koşabiliyor: bir kez sade aramayla (tür + ölçü) tekrar sor
+                val simple = simplifiedQuery(query)
+                val isBarcode = query.replace(" ", "").all { it.isDigit() }
+                if (!simpleTried && !isBarcode && simple.isNotEmpty() && norm(simple) != norm(query)) {
+                    simpleTried = true
+                    status.text = "${site.name}: sonuç yok, \"$simple\" ile tekrar soruluyor…"
+                    extractScheduled = false
+                    web.loadUrl(site.url(URLEncoder.encode(simple, "UTF-8").replace("+", "%20")))
+                    handler.postDelayed({ if (my == token) extract() }, 25000)
+                    return@evaluateJavascript
+                }
                 collect(site.name, data)
                 index++
                 handler.postDelayed({ if (my == token) runNext() }, 600)
@@ -630,7 +643,8 @@ class MainActivity : Activity() {
                     "\n    Sayfa başlığı: ${d?.optString("title").orEmpty()}" +
                     "\n    Sayfa metni: ${d?.optString("pageSample").orEmpty().ifEmpty { "(boş)" }}"
             }
-            else -> "$count ürün okundu" + if (d?.optBoolean("fallback") == true) " (yedek yöntemle)" else ""
+            else -> "$count ürün okundu" + (if (d?.optBoolean("fallback") == true) " (yedek yöntemle)" else "") +
+                (if (simpleTried) " (sade aramayla: \"${simplifiedQuery(query)}\")" else "")
         }
         siteSummary.add("$name: $verdict")
         status.text = "$name: $verdict"
@@ -690,6 +704,14 @@ class MainActivity : Activity() {
             }
         }
         return words to hard
+    }
+
+    /** Sade arama: markasız, miktarsız; ürün türü + ölçü ("ataş no 6") */
+    private fun simplifiedQuery(q: String): String {
+        val (words, hard) = querySpec(q)
+        val type = words.drop(1).firstOrNull() ?: words.firstOrNull() ?: return ""
+        val specs = hard.map { it.replace(Regex("([a-zçğıöşü]+)([0-9]+)"), "$1 $2") }
+        return (listOf(type) + specs).joinToString(" ")
     }
 
     /** Aramadaki zorunlu kelimeler (tür kelimeleri + şart olan ölçüler) */
@@ -1308,7 +1330,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 15\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 16\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

@@ -204,7 +204,7 @@ class MainActivity : Activity() {
             if (/mağazaya git|satıcı puanı|mağaza puanı|satıcıya sor|gönderici/i.test(lines[j])) dbg.push(ctx(j, 3, 1));
           }
           return JSON.stringify({ w: wm ? wm[1] : '', wt: wt ? wt[1].trim() : '', wd: wd ? wd[1].trim() : '',
-            seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 320),
+            seller: seller.trim(), score: sc, wl: wl, sl: (sline || dbg.join(' || ')).slice(0, 700),
             len: fullLen,
             page: document.title.slice(0, 80) + ' | metin ' + fullLen + ' karakter | ' + location.href.slice(0, 90) });
         })()

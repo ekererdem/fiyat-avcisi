@@ -189,6 +189,15 @@ class MainActivity : Activity() {
               if (seller) break;
             }
           }
+          // Satıcı bulunamadıysa teşhis için fiyat satırının çevresini ve "satıcı/mağaza/garanti" geçen satırları raporla
+          if (!seller && !sline) {
+            var parts = [];
+            for (var pi = 0; pi < lines.length; pi++) { if (/[0-9][0-9.,]*\s?TL/.test(lines[pi])) { parts.push(ctx(pi, 4, 8)); break; } }
+            for (var qi = 0; qi < lines.length && parts.length < 4; qi++) {
+              if (/satıcı|mağaza|garanti/i.test(lines[qi])) parts.push(lines[qi].slice(0, 80));
+            }
+            sline = 'TEŞHİS: ' + parts.join(' || ');
+          }
           var sc = (sline.match(/(?:^|[\s|])((?:10|[0-9])[.,]\d)(?=[\s|]|$)/) || [])[1] || '';
           var dbg = [];
           for (var j = 0; j < lines.length && dbg.length < 3; j++) {
@@ -364,7 +373,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 17", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 18", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -1334,7 +1343,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 17\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 18\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

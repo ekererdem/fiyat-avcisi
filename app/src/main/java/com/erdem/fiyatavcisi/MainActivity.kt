@@ -75,6 +75,7 @@ class MainActivity : Activity() {
         var exact: Boolean = false,      // barkodla sitede birebir bulundu
         var dupCount: Int = 0,           // aynı ilanı satan başka satıcı sayısı
         var note: String = "",           // "★ birim fiyatı en uygun", "⚠ birim fiyatı 5 kat"
+        var brandHint: String = "",      // kartta addan önce yazan kısa metin (Amazon'da marka)
     )
 
     private enum class Kind { MATCH, MUADIL, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, USED, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -109,6 +110,7 @@ class MainActivity : Activity() {
         "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
         "replacement", "compatible", "blades", "blade kit", "charger", "cable", "case for",
         "cüzdan", "kartlık", "anahtarlık", "kordon", "kayış", "bağcık", "çorap", "tişört", "şapka", "poster",
+        "lego", "oyuncak", "maket", "puzzle", "figür",
     )
 
     private val gold = Color.parseColor("#C8961E")
@@ -137,7 +139,8 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("kimlik", Context.MODE_PRIVATE) }
     private val detailQueue = mutableListOf<Offer>()
     private var queryAmount: Amount? = null   // aramadaki miktar: 200 g, 80 adet, 100 ml
-    private var acceptedMods: Set<String> = emptySet()   // seçilen seri: "Aktif Bebek" gibi
+    private var acceptedMods: Set<String> = emptySet()
+    private var requiredSeries: Set<String> = emptySet()   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
     private val detailJs = """
@@ -165,7 +168,9 @@ class MainActivity : Activity() {
           var wt = t.match(/garanti tipi\s*:?\s*\|?\s*([^,|\n]{3,40})/i);
           var wd = t.match(/garanti süresi\s*:?\s*\|?\s*(\d+\s*(?:yıl|ay))/i);
           var wl = '';
-          for (var q = 0; q < lines.length; q++) { if (/garanti (tipi|türü|süresi)|garantili/i.test(lines[q])) { wl = ctx(q, 0, 1); break; } }
+          // Sadece ürünün kendi "Garanti ..." satırları (sayfa altındaki "son gezilen ürünler" sayılmasın)
+          for (var q = 0; q < lines.length; q++) { if (/^garanti (tipi|türü|süresi|bilgisi)/i.test(lines[q])) { wl = ctx(q, 0, 1); break; } }
+          if (!wl && wm && h1) wl = 'başlıktan: ' + (h1.innerText || '').slice(0, 120);
 
           // Satıcı: birkaç farklı yerleşimi sırayla dene
           var seller = '', sline = '', pageScore = '';
@@ -343,7 +348,7 @@ class MainActivity : Activity() {
             var ok = ps.filter(function(x){ return x >= max * 0.4; });
             var price = Math.min.apply(null, ok);
 
-            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk|sponsorlu|reklam|uygulamada aç|kapılarını|daha iyi bir deneyim|amazon.un seçimi|çok satan|en beğenilen|öne çıkan|fırsat ürünü/i;
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk|sponsorlu|reklam|uygulamada aç|kapılarını|daha iyi bir deneyim|amazon.un seçimi|çok satan|en beğenilen|öne çıkan|fırsat ürünü|ek destek|\bTL\b|₺/i;
             function okTitle(c){ c = (c || '').replace(/\s+/g, ' ').trim(); return (c.length >= 10 && c.length <= 250 && !notTitle.test(c) && !priceOne.test(c)) ? c : ''; }
             // Ürün adresindeki ad: /Tekerlekli-Kitap-Minik-Itfaiye/dp/... ya da /marka/urun-adi-p-123
             var slug = '';
@@ -371,8 +376,26 @@ class MainActivity : Activity() {
             cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
               badge: ((/yetkili satıcı|resmi satıcı|resmi mağaza|marka mağazası/i.exec(text) || [''])[0]),
-              raw: text.replace(/\s+/g, ' ').slice(0, 160) });
+              alts: ok, raw: text.replace(/\s+/g, ' ').slice(0, 260) });
           }
+          // Farklı ürünlerin çoğunda aynı fiyat varsa ("300 TL üzeri ücretsiz kargo" gibi bir afiş): o sayı fiyat değildir
+          if (cards.length >= 4) {
+            var freq = {};
+            cards.forEach(function(c){ freq[c.p] = (freq[c.p] || 0) + 1; });
+            Object.keys(freq).forEach(function(k){
+              var v = parseFloat(k);
+              var titles = {};
+              cards.forEach(function(c){ if (c.p === v) titles[c.t] = 1; });
+              if (freq[k] >= 4 && freq[k] >= cards.length * 0.4 && Object.keys(titles).length >= 3) {
+                cards.forEach(function(c){
+                  if (c.p !== v) return;
+                  var rest = c.alts.filter(function(x){ return x !== v; });
+                  if (rest.length) { c.p = Math.min.apply(null, rest); c.banner = v; }
+                });
+              }
+            });
+          }
+          cards.forEach(function(c){ delete c.alts; });
           return JSON.stringify({ title: document.title, url: location.href, block: hit,
             anchors: anchors.length, fallback: usedFallback, links: all.length,
             sampleLinks: cards.length ? [] : sampleLinks, cards: cards,
@@ -414,7 +437,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 30", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 31", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -615,7 +638,10 @@ class MainActivity : Activity() {
             last = c
             d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3) ||
                 // Ürünler gelmiş ama hiçbiri aramayla ilgili değilse beklemeye gerek yok
-                (c > 0 && n >= 3 && !isBarcodeSearch && isIrrelevant(d, q))
+                // (Önce üstteki öneri/sponsorlu kartlar gelebilir: sayfa oturmadan "ilgisiz" denmez)
+                (c > 0 && n >= 5 && stable >= 2 && !isBarcodeSearch && isIrrelevant(d, q)) ||
+                // Sayfa açıldı ama hiç ürün kartı yok (site bu ürünü satmıyor): sonuna kadar bekleme
+                (c == 0 && n >= 5 && (d?.optInt("links") ?: 0) > 30)
         }) { d0 ->
             // Sonuç: son ölçümün sayfa bilgisi + biriken bütün kartlar
             val d = d0?.also { if (acc.isNotEmpty()) it.put("cards", org.json.JSONArray(acc.values.toList())) }
@@ -699,6 +725,7 @@ class MainActivity : Activity() {
         resolveQuery = cleanInput
         acceptedMods = prefs.getString("m:" + norm(userInput), null)
             ?.split("|")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        requiredSeries = acceptedMods
 
         // Hafıza 1: bu giriş için daha önce bir paket seçildiyse sormadan onu kullan
         val saved = prefs.getString("q:" + norm(userInput), null)
@@ -768,7 +795,8 @@ class MainActivity : Activity() {
         val count = cards?.length() ?: 0
         val isBarcode = q.replace(" ", "").let { s -> s.length in 8..14 && s.all { it.isDigit() } }
         if (count > 0 && !isBarcode && isIrrelevant(d, q)) {
-            siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor)")
+            val sample = (0 until minOf(2, count)).joinToString(" | ") { cards!!.getJSONObject(it).optString("t").take(60) }
+            siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor) — ör: $sample")
             return
         }
         val seen = offers.map { offerKey(it) }.toHashSet()
@@ -786,6 +814,9 @@ class MainActivity : Activity() {
                 raw = c.optString("raw"),
                 badge = c.optString("badge"),
             )
+            // Amazon markayı ad satırının üstünde ayrı yazar: kart metninde addan önceki kısa yazı marka olabilir
+            val idx = o.raw.indexOf(o.title.take(20))
+            if (idx in 1..40) o.brandHint = o.raw.substring(0, idx).trim()
             if (seen.add(offerKey(o))) offers.add(o)
         }
         val block = d?.optString("block").orEmpty()
@@ -882,7 +913,7 @@ class MainActivity : Activity() {
 
     // Arama kelimesi olarak şart sayılmayan kelimeler: renk, cinsiyet, konsantrasyon, genel tür adı
     private val colorWords = setOf("beyaz", "siyah", "kirmizi", "mavi", "lacivert", "gri", "yesil", "sari", "pembe", "mor",
-        "turuncu", "kahverengi", "kahve rengi", "bej", "krem", "lila", "bordo", "haki", "gumus", "altin", "rose", "white", "black",
+        "turuncu", "kahverengi", "kahve rengi", "bej", "lila", "bordo", "haki", "gumus", "altin", "rose", "white", "black",
         "red", "blue", "grey", "gray", "green", "pink", "silver", "gold rengi")
     private val softWords = setOf("erkek", "kadin", "bayan", "unisex", "edt", "edp", "edc", "parfum", "extrait", "numara", "beden")
     private val concWords = setOf("edt", "edp", "edc", "extrait", "parfum")
@@ -905,6 +936,22 @@ class MainActivity : Activity() {
         "aktif" to "Aktif Bebek", "premium" to "Premium", "kulot" to "Külot", "pants" to "Külot", "harmonie" to "Harmonie",
         "stick" to "Stick", "kavanoz" to "Kavanoz", "cam" to "Kavanoz",
         "ps" to "Çocuk", "gs" to "Çocuk", "td" to "Çocuk", "cocuk" to "Çocuk", "kids" to "Çocuk", "junior" to "Çocuk",
+        "plt" to "Platform", "jewel" to "Jewel", "lx" to "LX", "se" to "SE", "flyease" to "Flyease", "retro" to "Retro",
+        "nature" to "Next Nature", "nn" to "Next Nature", "fontanka" to "Fontanka",
+        // Aynı isimli başka ürün türleri (parfüm ararken tıraş sonrası losyon vb.)
+        "after" to "After Shave", "aftershave" to "After Shave", "balm" to "Balm", "losyon" to "Losyon",
+        "deodorant" to "Deodorant", "deo" to "Deodorant", "jeli" to "Duş Jeli", "sampuan" to "Şampuan",
+    )
+
+    // Renkler tek biçime iner: white = beyaz; "panda" siyah-beyazdır
+    private val colorMap = mapOf(
+        "beyaz" to "beyaz", "white" to "beyaz", "siyah" to "siyah", "black" to "siyah", "kirmizi" to "kırmızı", "red" to "kırmızı",
+        "mavi" to "mavi", "blue" to "mavi", "lacivert" to "lacivert", "navy" to "lacivert", "gri" to "gri", "grey" to "gri",
+        "gray" to "gri", "yesil" to "yeşil", "green" to "yeşil", "sari" to "sarı", "yellow" to "sarı", "pembe" to "pembe",
+        "pink" to "pembe", "mor" to "mor", "purple" to "mor", "turuncu" to "turuncu", "orange" to "turuncu",
+        "kahverengi" to "kahverengi", "brown" to "kahverengi", "bej" to "bej", "beige" to "bej", "krem" to "krem",
+        "cream" to "krem", "lila" to "lila", "bordo" to "bordo", "haki" to "haki", "gumus" to "gümüş", "silver" to "gümüş",
+        "altin" to "altın", "rose" to "pembe",
     )
 
     private fun traitsOf(s: String): Set<String> = tokensOf(s).mapNotNull { modMap[norm(it)] }.toSet()
@@ -921,13 +968,20 @@ class MainActivity : Activity() {
         }.toSet()
     }
 
-    private fun colorsIn(s: String) = tokensOf(s).map { norm(it) }.filter { it in colorWords }.toSet()
+    private fun colorsIn(s: String): Set<String> {
+        val out = tokensOf(s).mapNotNull { colorMap[norm(it)] }.toMutableSet()
+        if (tokensOf(s).any { norm(it) == "panda" }) { out.add("siyah"); out.add("beyaz") }
+        return out
+    }
 
     /** Parfüm konsantrasyonu. Türkçe "parfüm" genel addır; sadece "parfum" (EDP'den yoğun) sayılır. */
     private fun concOf(s: String) = tokensOf(s).filter { it in concWords || it == "elixir" }.toSet()
 
-    private val usedRe = Regex("yenilenmiş|yenilenmis|ikinci el|2\\. ?el\\b|teşhir|refurbished|renewed|kullanılmış|outlet ürün")
+    private val usedRe = Regex("yenilenmiş|yenilenmis|ikinci el|2\\. ?el\\b|teşhir|refurbished|renewed|kullanılmış|outlet ürün|(?<![\\p{L}])[abc] (kalite|grade)(?![\\p{L}])|yenilio")
     private val knockoffRe = Regex("muadil|esans|alternatif|inspired|esintili|kokusunda|tipi parfüm|benzeri")
+
+    /** Türkçe küçük harfte İngilizce "I" noktasız "ı" olur ("ınternational"): kalıplar iki biçimde de denenir */
+    private fun hit(re: Regex, t: String) = re.containsMatchIn(t) || re.containsMatchIn(t.replace('ı', 'i'))
 
     /** Miktar: paket başına miktar (g / ml / adet) ve paket sayısı. "200 gr x 3", "2 x 200 gr", "80'li * 2" */
     private data class Amount(val per: Double, val unit: String, val mult: Double) {
@@ -961,7 +1015,7 @@ class MainActivity : Activity() {
             val m = Regex("([0-9]{1,3}(?:\\.[0-9]{3})+|[0-9]+)\\s*(?:adet|['’]?\\s?l[iıuü]\\b)").find(t) ?: return null
             val n = numberOf(m.groupValues[1])
             if (n <= 1) return null
-            return Amount(n, "adet", packMultiplier(t, m.range.first, m.range.last))
+            return Amount(n, "adet", packMultiplier(t, m.range.first, m.range.last, countUnit = true))
         }
         return if (prefer == "adet") count() ?: weight() else weight() ?: count()
     }
@@ -1093,10 +1147,13 @@ class MainActivity : Activity() {
                 val baseCount = groups[emptySet()]?.size ?: 0
                 val bigGroups = groups.filter { it.key.isNotEmpty() && it.value.size >= 2 }
                     .toList().sortedByDescending { it.second.size }.take(5)
+                // Seri yazmayan birkaç ilan, seri yazan çoğunluğu gölgelemesin
+                val named = groups.filter { it.key.isNotEmpty() }.values.sumOf { it.size }
                 when {
-                    baseCount >= 2 || bigGroups.isEmpty() -> continueWithoutIdentity()
+                    bigGroups.isEmpty() || baseCount * 2 >= named -> continueWithoutIdentity()
                     bigGroups.size == 1 -> {
                         acceptedMods = acceptedMods + bigGroups[0].first
+                        requiredSeries = bigGroups[0].first
                         resolveLog.append("Tek seri bulundu: ").append(bigGroups[0].first.joinToString(" ")).append("\n")
                         continueWithoutIdentity()
                     }
@@ -1236,16 +1293,19 @@ class MainActivity : Activity() {
         val titles = mutableMapOf<String, MutableList<String>>()
         val prices = mutableMapOf<String, MutableList<Double>>()
         val perSite = mutableMapOf<String, Int>()
+        var eligible = 0
         for (o in offers) {
             val t = o.title.lowercase(Locale("tr", "TR"))
-            if (isAccessory(t) || usedRe.containsMatchIn(t)) continue
+            if (isAccessory(t) || hit(usedRe, t)) continue
             val nt = canonNorm(o.title)
             val codes = codesIn(o.title)
             val pick = when (type) {
                 // Adla aramada: renk kodlu Apple parça numaraları ve çocuk/Pro gibi başka seriler aday olmaz
-                "ad" -> if (need.isNotEmpty() && need.all { hasWord(o.title, nt, it) } &&
-                    (traitsOf(o.title) + suffixTraits(resolveQuery, o.title) - qMods).isEmpty())
-                    codes.firstOrNull { !it.first.endsWith("/a") } else null
+                "ad" -> if (need.isNotEmpty() && need.all { hasOfferWord(o, nt, it, need.firstOrNull()) } &&
+                    (traitsOf(o.title) + suffixTraits(resolveQuery, o.title) - qMods).isEmpty()) {
+                    eligible++
+                    codes.firstOrNull { !it.first.endsWith("/a") }
+                } else null
                 "kod" -> codes.firstOrNull { it.first in inputCodes || it.second in inputCodes }
                     ?: codes.firstOrNull { c -> inputCodes.any { sameCode(c.first, it) || sameCode(c.second, it) } }?.let {
                         // QE55Q60DAUXTK, 55Q60D gibi yazımlar aranan kodun kendisidir: ayrı aday olmasın
@@ -1269,7 +1329,8 @@ class MainActivity : Activity() {
         val keys = count.keys.filter { !(it == baseOf[it] && it in withVariant) }
         val top = keys.maxOfOrNull { count[it] ?: 0 } ?: return emptyList()
         // Adla aramada kodlar dağınıksa (her kod 1-2 ilanda) bunlar renk/stil kodudur, sormaya değmez
-        if (type == "ad" && top < 3) return emptyList()
+        // ya da en sık kod eşleşen ilanların dörtte birinde bile geçmiyorsa (ayakkabı stil/renk kodları)
+        if (type == "ad" && (top < 3 || top * 4 < eligible)) return emptyList()
         return keys.filter { (count[it] ?: 0) * 4 >= top }
             .sortedWith(compareByDescending<String> { count[it] ?: 0 }.thenBy { prices[it]?.minOrNull() ?: 0.0 })
             .take(5)
@@ -1299,7 +1360,7 @@ class MainActivity : Activity() {
         val qMods = traitsOf(resolveQuery) + acceptedMods
         return offers.filter { o ->
             val t = o.title.lowercase(Locale("tr", "TR"))
-            !isAccessory(t) && !usedRe.containsMatchIn(t) && !knockoffRe.containsMatchIn(t) &&
+            !isAccessory(t) && !hit(usedRe, t) && !hit(knockoffRe, t) &&
                 need.all { hasWord(o.title, canonNorm(o.title), it) }
         }.groupBy { o -> traitsOf(o.title) + suffixTraits(resolveQuery, o.title) - qMods }
     }
@@ -1316,10 +1377,12 @@ class MainActivity : Activity() {
             .setItems(items.toTypedArray<CharSequence>()) { _, which ->
                 if (which < groups.size) {
                     acceptedMods = acceptedMods + groups[which].first
+                    requiredSeries = groups[which].first
                     prefs.edit().putString("m:" + norm(userInput), acceptedMods.joinToString("|")).apply()
                     resolveLog.append("Seçilen seri: ").append(groups[which].first.joinToString(" ")).append("\n")
                 } else {
                     acceptedMods = acceptedMods + groups.flatMap { it.first }
+                    requiredSeries = emptySet()
                     resolveLog.append("Seri seçilmedi; hepsi gösteriliyor.\n")
                 }
                 then()
@@ -1375,8 +1438,12 @@ class MainActivity : Activity() {
 
     // Aynı şeyin farklı yazımları tek biçime iner (ataç = ataş)
     // Türkçe harfler tek biçime iner (Itfaiye = İtfaiye, Clınıcal = Clinical); yazım eşleri birleşir (ataç = ataş)
-    private fun norm(s: String) = s.lowercase(Locale("tr", "TR"))
-        .replace('ı', 'i').replace('ş', 's').replace('ç', 'c').replace('ğ', 'g').replace('ö', 'o').replace('ü', 'u')
+    private fun norm(s: String) = java.text.Normalizer.normalize(
+        s.lowercase(Locale("tr", "TR"))
+            .replace('ı', 'i').replace('ş', 's').replace('ç', 'c').replace('ğ', 'g').replace('ö', 'o').replace('ü', 'u'),
+        java.text.Normalizer.Form.NFD)
+        // Nescafé = Nescafe, Crème = Creme
+        .replace(Regex("\\p{Mn}+"), "")
         .replace("atac", "atas").replace(Regex("[^a-z0-9]"), "")
 
     private fun classify() {
@@ -1398,7 +1465,7 @@ class MainActivity : Activity() {
             val sameBase = codes.filter { it.second == id.base || sameCode(it.second, id.base) }
             o.kind = when {
                 isAccessory(t) -> Kind.ACCESSORY
-                usedRe.containsMatchIn(t) && (sameBase.isNotEmpty() || codes.any { sameCode(it.first, id.code) }) -> Kind.USED
+                hit(usedRe, t) && (sameBase.isNotEmpty() || codes.any { sameCode(it.first, id.code) }) -> Kind.USED
                 codes.any { it.first == id.code || sameCode(it.first, id.code) } -> { o.variant = id.label; Kind.MATCH }
                 sameBase.any { it.first != it.second && !sameCode(it.first, id.code) } -> {
                     o.otherModel = sameBase.first { it.first != it.second && !sameCode(it.first, id.code) }.first.uppercase()
@@ -1446,12 +1513,20 @@ class MainActivity : Activity() {
             val titleModels = codesIn(o.title).map { it.first }.filter { c -> modelTokens.none { sameCode(c, it) } }
             val hasAll = required.isNotEmpty() && (
                 if (modelTokens.isNotEmpty()) modelTokens.all { titleHasCode(o.title, it) }
-                else required.all { hasWord(o.title, nt, it) })
+                else required.all { hasOfferWord(o, nt, it, specWords.firstOrNull()) })
+            // Numara/beden hiç yazmayan ilan: aynı ürün olabilir ("Prima Premium Care Ekonomik Paket 46 Adet")
+            val sizeMissing = !hasAll && modelTokens.isEmpty() && specHard.any { it.matches(Regex("no[0-9]+")) } &&
+                sizeNos(o.title).isEmpty() &&
+                required.filter { !it.matches(Regex("no[0-9]+")) }.all { hasOfferWord(o, nt, it, specWords.firstOrNull()) }
             o.kind = when {
                 isAccessory(t) -> Kind.ACCESSORY
-                hasAll && knockoffRe.containsMatchIn(t) -> Kind.OTHER
-                hasAll && usedRe.containsMatchIn(t) -> Kind.USED
+                hasAll && hit(knockoffRe, t) -> Kind.OTHER
+                // Yenilenmiş ilan da önce model kontrolünden geçer: "Yenilenmiş iPhone 16 Pro" farklı modeldir
+                hasAll && hit(usedRe, t) -> matchOrVariant(o, t, qMods, qColors, qConc, null).let {
+                    if (it == Kind.MATCH || it == Kind.POSSIBLE || it == Kind.OTHER_PACKAGE) Kind.USED else it
+                }
                 hasAll -> matchOrVariant(o, t, qMods, qColors, qConc, qAmt)
+                sizeMissing -> { o.otherModel = "numara/beden yazmıyor"; Kind.POSSIBLE }
                 !bookMode && !namedProduct && modelTokens.isEmpty() && typeWords.isNotEmpty() && specWords.isNotEmpty() &&
                     !nt.contains(specWords.first()) && specHard.all { hasWord(o.title, nt, it) } &&
                     typeWords.all { nt.contains(it) } -> Kind.MUADIL
@@ -1477,6 +1552,10 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Kelime ilanda var mı; marka için Amazon'un ad üstündeki marka satırına da bakılır */
+    private fun hasOfferWord(o: Offer, nt: String, w: String, brand: String?): Boolean =
+        hasWord(o.title, nt, w) || (w == brand && o.brandHint.isNotEmpty() && canonNorm(o.brandHint).contains(w))
+
     /** Aranan kelimelerin hepsi var: aynı ürün mü, başka seri/renk/miktar mı? */
     private fun matchOrVariant(o: Offer, t: String, qMods: Set<String>, qColors: Set<String>, qConc: Set<String>, qAmt: Amount?): Kind {
         val tMods = traitsOf(o.title) + suffixTraits(query, o.title)
@@ -1486,14 +1565,20 @@ class MainActivity : Activity() {
             o.otherModel = if (extra.isNotEmpty()) extra.sorted().joinToString(" ") else "${missing.sorted().joinToString(" ")} değil"
             return Kind.DIFFERENT_MODEL
         }
+        // Seçilen seriyi ("Aktif Bebek") yazmayan ilan: aynı seri olabilir, kontrol edilmeli
+        if (requiredSeries.isNotEmpty() && (requiredSeries intersect tMods).isEmpty()) {
+            o.otherModel = "seri yazmıyor"
+            return Kind.POSSIBLE
+        }
         val tConc = concOf(o.title)
         if (qConc.isNotEmpty() && tConc.isNotEmpty() && (tConc intersect qConc).isEmpty()) {
             o.otherModel = tConc.joinToString("/") { it.uppercase() }
             return Kind.DIFFERENT_MODEL
         }
         val tColors = colorsIn(o.title)
-        if (qColors.isNotEmpty() && tColors.isNotEmpty() && (tColors intersect qColors).isEmpty()) {
-            o.otherModel = "renk: " + tColors.joinToString(", ")
+        // Aranan renge başka renk eklenmişse ("Siyah-Beyaz", "Beyaz-Turuncu") farklı renktir
+        if (qColors.isNotEmpty() && tColors.isNotEmpty() && (tColors - qColors).isNotEmpty()) {
+            o.otherModel = "renk: " + tColors.joinToString("-")
             return Kind.DIFFERENT_MODEL
         }
         if (isSet(o)) {
@@ -1531,15 +1616,17 @@ class MainActivity : Activity() {
             if (o.kind == Kind.MATCH && o.variant.isEmpty()) o.variant = m.groupValues[1].uppercase() + region + "/A"
         }
         // Yurtdışı sürümü / ithal ürün yazan ilanlar
-        val abroad = Regex("global vers|international vers|global sürüm|uluslararası vers|yurt ?dışı|ithal ürün|avrupa versiyon|eu version|import")
-        val origin = Regex("menşei?\\s*:?\\s*([\\p{L}]+)")
+        val abroad = Regex("global vers|international vers|global sürüm|uluslararası vers|yurt ?dışı|ithal ürün|avrupa versiyon|eu version")
+        // "Menşei: Almanya" ya da "Almanya Menşeli"; "Türkiye Menşeli" yerlidir
+        val origin1 = Regex("menşei(?![\\p{L}])\\s*:?\\s*([\\p{L}]+)")
+        val origin2 = Regex("([\\p{L}]+)\\s+menşeli")
         for (o in offers) {
             if (o.origin.isNotEmpty()) continue
             val t = o.title.lowercase(Locale("tr", "TR"))
-            val om = origin.find(t)
+            val country = (origin1.find(t) ?: origin2.find(t))?.groupValues?.get(1)
             o.origin = when {
-                abroad.containsMatchIn(t) -> "Yurtdışı sürümü — garanti ve içerik farklı olabilir"
-                om != null && !om.groupValues[1].startsWith("türk") -> "İthal ürün (menşei ${om.groupValues[1]})"
+                hit(abroad, t) -> "Yurtdışı sürümü — garanti ve içerik farklı olabilir"
+                country != null && !country.startsWith("türk") -> "İthal ürün (menşei $country)"
                 else -> ""
             }
         }
@@ -1565,16 +1652,18 @@ class MainActivity : Activity() {
 
     /** Paket sayısı: miktardan önce "2 x 200 gr" ya da hemen sonra "x 6", "2 adet", "3'lü", "2 paket".
      *  "10 Kutu 1.000 Adet" gibi toplam yazılan ilanlarda tekrar çarpılmaz. */
-    private fun packMultiplier(t: String, first: Int, last: Int): Double {
-        Regex("(?<![0-9.,])([0-9]{1,3})\\s*x\\s*$").find(t.substring(0, first))?.let { m ->
-            val n = m.groupValues[1].toDoubleOrNull() ?: 1.0
-            if (n >= 2) return n
-        }
+    private fun packMultiplier(t: String, first: Int, last: Int, countUnit: Boolean = false): Double {
+        // Önce: "2 x 200 gr", "100 x 2 gr"
+        val before = Regex("(?<![0-9.,])([0-9]{1,3})\\s*x\\s*$").find(t.substring(0, first))
+            ?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it >= 2 } ?: 1.0
+        // Sonra: "x 6", "2 adet", "3'lü", "100'lü", "2 paket"
         val after = t.substring(minOf(t.length, last + 1), minOf(t.length, last + 31))
-        val m = Regex("x\\s*([0-9]{1,3})(?![0-9])|(?<![0-9.,])([0-9]{1,3})\\s*(?:adet|kutu|paket|koli)|(?<![0-9.,])([0-9]{1,2})\\s*['’]?\\s?l[iıuü](?![\\p{L}])")
-            .find(after) ?: return 1.0
-        val n = (m.groupValues[1].ifEmpty { m.groupValues[2] }.ifEmpty { m.groupValues[3] }).toDoubleOrNull() ?: 1.0
-        return if (n >= 2) n else 1.0
+        val m = Regex("x\\s*([0-9]{1,3})(?![0-9])|(?<![0-9.,])([0-9]{1,3})\\s*(?:adet|kutu|paket|koli)|(?<![0-9.,])([0-9]{1,3})\\s*['’]?\\s?l[iıuü](?![\\p{L}])")
+            .findAll(after)
+            // Adetle satılanda "216 Adet 4 Numara 4'lü": toplam zaten yazılı, "4'lü" ile tekrar çarpılmaz
+            .firstOrNull { !(countUnit && it.groupValues[3].isNotEmpty()) }
+        val n = m?.let { (it.groupValues[1].ifEmpty { it.groupValues[2] }.ifEmpty { it.groupValues[3] }).toDoubleOrNull() } ?: 1.0
+        return before * (if (n >= 2) n else 1.0)
     }
 
     private fun numberOf(s: String) = s.replace(".", "").replace(",", ".").toDoubleOrNull() ?: 0.0
@@ -1770,6 +1859,13 @@ class MainActivity : Activity() {
             markUnitPrices(matches)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        // Aranan miktarda ilan yoksa: aynı ürünün birim fiyatı en ucuz paketi
+        bestOtherPackage(matches, others)?.let { b ->
+            results.addView(label(
+                "Aranan miktarda ilan yok. Birim fiyatı en ucuz paket: ${money(b.price)} · ${b.site} · ${unitText(b)}\n${b.title.take(90)}",
+                13f, green, true
+            ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
+        }
         // Eşleşen ürün varsa muadil ancak birim fiyatı ondan ucuzsa anlamlıdır (pahalı taklitler gösterilmez)
         val bestMatchUnit = matches.filter { !isSet(it) }.mapNotNull { unitPrice(it)?.first }.minOrNull()
         val muadils = collapse(others.filter { it.kind == Kind.MUADIL })
@@ -1824,13 +1920,25 @@ class MainActivity : Activity() {
     private fun isSet(o: Offer): Boolean {
         val t = o.title.lowercase(Locale("tr", "TR"))
         // "Deodorant 150 ml + Stick 45 ml": artının iki yanında ürün var. "1+1" gibi kampanya yazıları set değil.
-        return Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l|adet)\\b[^+]{0,4}\\+\\s*[\\p{L}]").containsMatchIn(t) ||
-            (genderOf(t) == "Erkek & Kadın" && !t.contains("unisex"))
+        // "+ Coffee Mate", "+ 1 Adet Termos Hediye"; "1+1" kampanyası set değil
+        if (Regex("(?<![0-9])\\+\\s*(?!cellular|lte)(?:[0-9]+\\s*(?:adet\\s*)?)?[\\p{L}]").containsMatchIn(t)) return true
+        // "Setli ürün", "hediyeli" (aranan ürün zaten set değilse)
+        if (!norm(query).contains("set") && Regex("hediye|setli|(?<![\\p{L}])set(i)?(?![\\p{L}])").containsMatchIn(t)) return true
+        // "200 gr x2 ve Nestle Coffee Mate 500 gr": "ve"den sonra miktarıyla başka bir ürün
+        return Regex("(?<![\\p{L}])ve\\s+[\\p{L}]+(?:\\s+[\\p{L}]+){0,3}\\s+[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l)(?![\\p{L}])").containsMatchIn(t)
     }
 
     private fun markUnitPrices(matches: List<Offer>) {
         matches.filter { isSet(it) }.forEach { it.note = "⚠ Set: başka ürünlerle birlikte satılıyor" }
         val withUnit = matches.filter { !isSet(it) }.mapNotNull { o -> unitPrice(o)?.let { o to it.first } }
+        // Birim fiyatı olmayan ürünler (telefon, ayakkabı): fiyatı diğerlerinin 2 katından fazlaysa uyar
+        val plain = matches.filter { !isSet(it) }.map { it.price }.sorted()
+        if (plain.size >= 3) {
+            val med = plain[plain.size / 2]
+            matches.filter { !isSet(it) && unitPrice(it) == null && it.price > med * 2 }.forEach {
+                it.note = "⚠ fiyatı diğerlerinin ${String.format(Locale("tr", "TR"), "%.1f", it.price / med)} katı"
+            }
+        }
         if (withUnit.size < 2) return
         val sorted = withUnit.map { it.second }.sorted()
         val median = sorted[sorted.size / 2]
@@ -1839,11 +1947,16 @@ class MainActivity : Activity() {
         withUnit.forEach { (o, u) ->
             o.note = when {
                 o === best -> "★ birim fiyatı en uygun"
-                u > median * 2.5 -> "⚠ birim fiyatı diğerlerinin ${String.format(Locale("tr", "TR"), "%.1f", u / median)} katı"
+                u > median * 2 -> "⚠ birim fiyatı diğerlerinin ${String.format(Locale("tr", "TR"), "%.1f", u / median)} katı"
                 else -> ""
             }
         }
     }
+
+    private fun bestOtherPackage(matches: List<Offer>, others: List<Offer>): Offer? =
+        if (matches.isNotEmpty()) null
+        else others.filter { it.kind == Kind.OTHER_PACKAGE && !isSet(it) && unitPrice(it) != null }
+            .minByOrNull { unitPrice(it)!!.first }
 
     /** Birim fiyatı olanlar birim fiyata göre önce, olmayanlar fiyata göre sonra */
     private fun sortedByUnit(list: List<Offer>) =
@@ -1913,7 +2026,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 30\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 31\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
@@ -1924,6 +2037,10 @@ class MainActivity : Activity() {
 
         report.append("\nEŞLEŞENLER (ucuzdan pahalıya)\n")
         if (matches.isEmpty()) report.append("(yok)\n")
+        bestOtherPackage(matches, others)?.let { b ->
+            report.append("ÖZET: aranan miktarda ilan yok; birim fiyatı en ucuz paket: ").append(money(b.price)).append(" | ")
+                .append(b.site).append(" | ").append(unitText(b)).append("\n  ").append(b.title).append("\n")
+        }
         matches.forEach { o ->
             report.append("- ").append(money(o.price))
             if (o.basket) report.append(" sepette")

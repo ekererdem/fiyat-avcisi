@@ -24,7 +24,16 @@ jobs:
           gradle-version: "8.11.1"
 
       - name: Derle
-        run: gradle assembleDebug --no-daemon --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon 2>&1 | tee build.log
+
+      - name: Derleme hatalarını özetle
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^e: |error:|What went wrong" -A 2 build.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
 
       - name: APK'yı yayınla
         env:

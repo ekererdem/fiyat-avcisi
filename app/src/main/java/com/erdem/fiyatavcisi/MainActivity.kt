@@ -140,7 +140,9 @@ class MainActivity : Activity() {
     private val detailQueue = mutableListOf<Offer>()
     private var queryAmount: Amount? = null   // aramadaki miktar: 200 g, 80 adet, 100 ml
     private var acceptedMods: Set<String> = emptySet()
-    private var requiredSeries: Set<String> = emptySet()   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
+    private var requiredSeries: Set<String> = emptySet()
+    private val testMode = true          // test sürümü: seçimler hatırlanmaz
+    private var familyTried = false      // model bulunamayınca aynı serinin diğer yılları arandı mı   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
     private val detailJs = """
@@ -269,7 +271,7 @@ class MainActivity : Activity() {
      * en büyük kutuyu "kart" kabul eder; kartın içinden ad, fiyat ve puanı çeker.
      * Taksit, aylık ödeme, kupon ve kargo tutarlarını fiyat saymadan önce siler.
      */
-    private fun extractJs(linkPattern: String) = """
+    private fun extractJs(linkPattern: String, q: String = "") = """
         (function(){
           var pat = new RegExp('__PAT__');
           var priceRe = /(?:₺\s?[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?(?!\d))|(?:(?<![\d.,])(?<!,\s?)[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺(?!\s?\d)))/g;
@@ -283,6 +285,9 @@ class MainActivity : Activity() {
               // "300 TL ve üzeri siparişlerde ücretsiz teslimat" ürün fiyatı değildir
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)['’]?\s*(?:ve\s+)?(?:üzeri|üstü|altı|ye kadar|ya kadar|lik|lık)[^\n]{0,40}/gi, ' ')
               .replace(/(?:teslimat|gönderim)[^\n]{0,40}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
+              // "ilk siparişinizde 300 TL", "300 TL üzeri siparişlerde"
+              .replace(/sipariş[^\n]{0,50}?(?:₺\s?)?[\d.,]+\s*(?:TL|₺)/gi, ' ')
+              .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)[^\n\d]{0,30}sipariş/gi, ' ')
               // "(510,89 TL/100 ml)", "1,89 TL/adet" gibi birim fiyat yazıları ürün fiyatı değildir
               .replace(/\([^)]*\/[^)]*\)/g, ' ')
               .replace(/(?:₺\s?)?[\d.,]+\s*(?:TL|₺)\s*\/\s*[0-9]*\s*[a-zçğıöşü]+/gi, ' ')
@@ -369,6 +374,14 @@ class MainActivity : Activity() {
               if (sw.length >= 2 && hitw === 0) title = slug;
             }
             if (!title) title = slug;
+            // Seçilen ad aranan kelimeleri içermiyorsa ("4000 TL Ek Destek !"), kartta aranan kelimeleri en çok içeren satırı al
+            var qw = '__Q__'.split(' ').filter(function(w){ return w.length >= 3; });
+            function qhits(c){ var l = (c || '').toLowerCase(); return qw.filter(function(w){ return l.indexOf(w) >= 0; }).length; }
+            if (qw.length && qhits(title) < Math.min(2, qw.length)) {
+              var bestLine = '', bestHits = qhits(title);
+              text.split('\n').forEach(function(s){ var c = okTitle(s); var hh = qhits(c); if (hh > bestHits) { bestHits = hh; bestLine = c; } });
+              if (bestLine) title = bestLine;
+            }
             if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
 
             var rm = text.match(/(?:^|\s)([1-4][.,]\d|5[.,]0)(?=\s|\()/);
@@ -402,6 +415,7 @@ class MainActivity : Activity() {
             pageSample: cards.length ? '' : (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 200) });
         })()
     """.trimIndent().replace("__PAT__", linkPattern)
+        .replace("__Q__", q.lowercase(Locale("tr", "TR")).replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -437,7 +451,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 31", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 32", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -625,7 +639,7 @@ class MainActivity : Activity() {
         val acc = LinkedHashMap<String, JSONObject>()
         val url = site.url(URLEncoder.encode(q, "UTF-8").replace("+", "%20"))
         val isBarcodeSearch = q.replace(" ", "").all { it.isDigit() }
-        loadAndPoll(v, url, extractJs(site.linkPattern), maxMs = 9000, scroll = true, ready = { d, n ->
+        loadAndPoll(v, url, extractJs(site.linkPattern, q), maxMs = 9000, scroll = true, ready = { d, n ->
             d?.optJSONArray("cards")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val c = arr.getJSONObject(i)
@@ -666,10 +680,27 @@ class MainActivity : Activity() {
         var left = list.size
         val t0 = android.os.SystemClock.elapsedRealtime()
         status.text = "$label: ${list.size} site aynı anda taranıyor…"
+        val done = BooleanArray(list.size)
+        var phaseDone = false
+        val finish = { if (!phaseDone) { phaseDone = true; onAll() } }
+        // Mağazada hız: siteler 12 saniyede bitmediyse ve en az 4'ü bittiyse yavaş olanlar beklenmez
+        handler.postDelayed({
+            if (gen == phaseGen && !phaseDone && list.size - left >= 4) {
+                list.forEachIndexed { i, s ->
+                    if (!done[i]) {
+                        slots.getValue(pool[i]).gen++
+                        pool[i].stopLoading()
+                        siteSummary.add("${s.name}: yavaş — beklenmedi (12 sn)")
+                    }
+                }
+                finish()
+            }
+        }, 12000)
         list.forEachIndexed { i, site ->
             val v = pool[i]
             runSite(v, site, q, simpleUsed = false, reloaded = false) { d, simpleUsed ->
-                if (gen == phaseGen) {
+                if (gen == phaseGen && !phaseDone) {
+                    done[i] = true
                     collect(site.name, d, q, simpleUsed, slots.getValue(v))
                     if (siteSummary.isNotEmpty()) {
                         siteSummary[siteSummary.size - 1] = siteSummary.last() + " · " +
@@ -679,7 +710,7 @@ class MainActivity : Activity() {
                     status.text = "$label: ${list.size - left}/${list.size} site tamam · " +
                         elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
                     onEach()
-                    if (left == 0) onAll()
+                    if (left == 0) finish()
                 }
             }
         }
@@ -723,12 +754,14 @@ class MainActivity : Activity() {
             .replace(Regex("\\s+"), " ").trim().ifEmpty { userInput }
         resolveType = inputType(cleanInput)
         resolveQuery = cleanInput
-        acceptedMods = prefs.getString("m:" + norm(userInput), null)
-            ?.split("|")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        familyTried = false
+        // Test sürümünde hafıza okunmaz: her arama sıfırdan (sarı satıra basmaya gerek yok)
+        val mem = { k: String -> if (testMode) null else prefs.getString(k + norm(userInput), null) }
+        acceptedMods = mem("m:")?.split("|")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         requiredSeries = acceptedMods
 
         // Hafıza 1: bu giriş için daha önce bir paket seçildiyse sormadan onu kullan
-        val saved = prefs.getString("q:" + norm(userInput), null)
+        val saved = mem("q:")
         if (saved != null) {
             identity = identityFromJson(saved)
             resolveLog.append("Kimlik hafızadan alındı.\n")
@@ -736,7 +769,7 @@ class MainActivity : Activity() {
             return
         }
         // Hafıza 2: barkoddan/addan daha önce bulunan ürün adı
-        prefs.getString("n:" + norm(userInput), null)?.let { s ->
+        mem("n:")?.let { s ->
             try {
                 val j = JSONObject(s)
                 resolveQuery = j.getString("name")
@@ -780,7 +813,7 @@ class MainActivity : Activity() {
         val qCodes = codesIn(q).map { it.first }
         val words = requiredWords(q)
         if (words.isEmpty() && qCodes.isEmpty()) return false
-        return (0 until cards.length()).none { i ->
+        val relevant = (0 until cards.length()).count { i ->
             val c = cards.getJSONObject(i)
             val text = c.optString("t") + " " + c.optString("raw")
             val nt = canonNorm(text)
@@ -788,6 +821,8 @@ class MainActivity : Activity() {
             qCodes.any { titleHasCode(text, it) } ||
                 (words.isNotEmpty() && words.count { hasWord(text, nt, it) } >= minOf(2, words.size))
         }
+        // Hiçbiri ya da 8+ kart içinde sadece biri (ayakkabı ararken klavye, mouse ve tek bir LEGO) ilgiliyse
+        return relevant == 0 || (cards.length() >= 8 && relevant <= 1)
     }
 
     private fun collect(name: String, d: JSONObject?, q: String, simpleUsed: Boolean, slot: Slot) {
@@ -941,6 +976,11 @@ class MainActivity : Activity() {
         // Aynı isimli başka ürün türleri (parfüm ararken tıraş sonrası losyon vb.)
         "after" to "After Shave", "aftershave" to "After Shave", "balm" to "Balm", "losyon" to "Losyon",
         "deodorant" to "Deodorant", "deo" to "Deodorant", "jeli" to "Duş Jeli", "sampuan" to "Şampuan",
+        "le" to "Çocuk", "havlu" to "Islak Havlu", "mendil" to "Islak Havlu",
+        // Kahve: aynı markanın başka ürünleri
+        "crema" to "Crema", "filtre" to "Filtre Kahve", "kafeinsiz" to "Kafeinsiz", "decaf" to "Kafeinsiz",
+        "aromali" to "Aromalı", "karamel" to "Aromalı", "vanilya" to "Aromalı", "findik" to "Aromalı",
+        "roastery" to "Roastery", "icimlik" to "Stick",
     )
 
     // Renkler tek biçime iner: white = beyaz; "panda" siyah-beyazdır
@@ -1057,8 +1097,8 @@ class MainActivity : Activity() {
     private fun sizeNos(title: String): Set<String> {
         val t = title.lowercase(Locale("tr", "TR"))
         val out = mutableSetOf<String>()
-        Regex("(?<![\\p{L}])(?:no|numara|beden|size)\\s*[:.]?\\s*([0-9]{1,2})(?![0-9])").findAll(t).forEach { out.add(it.groupValues[1].trimStart('0')) }
-        Regex("(?<![0-9])([0-9]{1,2})\\s*(?:no|numara|beden)(?![\\p{L}])").findAll(t).forEach { out.add(it.groupValues[1].trimStart('0')) }
+        Regex("(?<![\\p{L}])(?:no|numara|beden|size)\\s*[:.]?\\s*([0-9]{1,2})(?![0-9x×*])").findAll(t).forEach { out.add(it.groupValues[1].trimStart('0')) }
+        Regex("(?<![0-9x×*=])([0-9]{1,2})\\s*(?:no|numara|beden)(?![\\p{L}])").findAll(t).forEach { out.add(it.groupValues[1].trimStart('0')) }
         return out
     }
 
@@ -1526,7 +1566,10 @@ class MainActivity : Activity() {
                     if (it == Kind.MATCH || it == Kind.POSSIBLE || it == Kind.OTHER_PACKAGE) Kind.USED else it
                 }
                 hasAll -> matchOrVariant(o, t, qMods, qColors, qConc, qAmt)
-                sizeMissing -> { o.otherModel = "numara/beden yazmıyor"; Kind.POSSIBLE }
+                // Numara yazmayan ilan da seri/tür kontrolünden geçer (ıslak havlu, başka seri)
+                sizeMissing -> matchOrVariant(o, t, qMods, qColors, qConc, null).let {
+                    if (it == Kind.MATCH || it == Kind.POSSIBLE) { o.otherModel = "numara/beden yazmıyor"; Kind.POSSIBLE } else it
+                }
                 !bookMode && !namedProduct && modelTokens.isEmpty() && typeWords.isNotEmpty() && specWords.isNotEmpty() &&
                     !nt.contains(specWords.first()) && specHard.all { hasWord(o.title, nt, it) } &&
                     typeWords.all { nt.contains(it) } -> Kind.MUADIL
@@ -1657,7 +1700,7 @@ class MainActivity : Activity() {
         val before = Regex("(?<![0-9.,])([0-9]{1,3})\\s*x\\s*$").find(t.substring(0, first))
             ?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it >= 2 } ?: 1.0
         // Sonra: "x 6", "2 adet", "3'lü", "100'lü", "2 paket"
-        val after = t.substring(minOf(t.length, last + 1), minOf(t.length, last + 31))
+        val after = t.substring(minOf(t.length, last + 1), minOf(t.length, last + 31)).substringBefore('+').substringBefore('&')
         val m = Regex("x\\s*([0-9]{1,3})(?![0-9])|(?<![0-9.,])([0-9]{1,3})\\s*(?:adet|kutu|paket|koli)|(?<![0-9.,])([0-9]{1,3})\\s*['’]?\\s?l[iıuü](?![\\p{L}])")
             .findAll(after)
             // Adetle satılanda "216 Adet 4 Numara 4'lü": toplam zaten yazılı, "4'lü" ile tekrar çarpılmaz
@@ -1710,6 +1753,20 @@ class MainActivity : Activity() {
 
     private fun startDetails() {
         prepareResults()
+        // Model koduyla hiçbir sitede bulunamadıysa: aynı serinin başka yılları (QE55Q60D -> "Samsung 55Q60": Q60C, Q60F...)
+        if (identity == null && resolveType == "kod" && !familyTried &&
+            offers.none { it.kind == Kind.MATCH || it.kind == Kind.POSSIBLE }) {
+            familyTried = true
+            val code = codesIn(query).firstOrNull()?.first
+            val fam = code?.let { codeCore(it).dropLastWhile { c -> c.isLetter() } }
+            if (code != null && fam != null && fam.length >= 4 && fam != code && fam.any { it.isLetter() }) {
+                val brand = query.split(" ").firstOrNull { w -> w.isNotBlank() && codesIn(w).isEmpty() }.orEmpty()
+                val fq = "$brand ${fam.uppercase()}".trim()
+                resolveLog.append("Model sitelerde bulunamadı; aynı seri aranıyor: ").append(fq).append("\n")
+                runSites(sites, fq, "Model bulunamadı, aynı seri aranıyor", onEach = { render(final = false) }) { startDetails() }
+                return
+            }
+        }
         detailQueue.clear()
         // Ürün sayfası (satıcı + garanti) sadece model kodlu ya da 1.000 TL üstü eşleşmelerde, hepsi aynı anda açılır
         detailQueue.addAll(
@@ -1859,6 +1916,12 @@ class MainActivity : Activity() {
             markUnitPrices(matches)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        if (familyTried && matches.isEmpty()) {
+            results.addView(label(
+                "Bu model sitelerde bulunamadı (satıştan kalkmış olabilir). Aşağıda aynı serinin başka yılları/modelleri var.",
+                13f, orange, true
+            ).apply { setPadding(dp(4), dp(8), dp(4), 0) })
+        }
         // Aranan miktarda ilan yoksa: aynı ürünün birim fiyatı en ucuz paketi
         bestOtherPackage(matches, others)?.let { b ->
             results.addView(label(
@@ -1921,7 +1984,9 @@ class MainActivity : Activity() {
         val t = o.title.lowercase(Locale("tr", "TR"))
         // "Deodorant 150 ml + Stick 45 ml": artının iki yanında ürün var. "1+1" gibi kampanya yazıları set değil.
         // "+ Coffee Mate", "+ 1 Adet Termos Hediye"; "1+1" kampanyası set değil
-        if (Regex("(?<![0-9])\\+\\s*(?!cellular|lte)(?:[0-9]+\\s*(?:adet\\s*)?)?[\\p{L}]").containsMatchIn(t)) return true
+        if (Regex("(?<![0-9])\\+\\s*(?!cellular|lte)(?:[0-9]+\\s*['’]?\\s*(?:l[iıuü]\\s*|adet\\s*)?)?[\\p{L}]").containsMatchIn(t)) return true
+        // "84 Adet Bez & Külot Bez 44 Adet": & ile miktarlı ikinci bir ürün
+        if (Regex("&\\s*[\\p{L}][^&]*?[0-9]+\\s*(adet|ml|gr|g|kg)(?![\\p{L}])").containsMatchIn(t)) return true
         // "Setli ürün", "hediyeli" (aranan ürün zaten set değilse)
         if (!norm(query).contains("set") && Regex("hediye|setli|(?<![\\p{L}])set(i)?(?![\\p{L}])").containsMatchIn(t)) return true
         // "200 gr x2 ve Nestle Coffee Mate 500 gr": "ve"den sonra miktarıyla başka bir ürün
@@ -1931,17 +1996,20 @@ class MainActivity : Activity() {
     private fun markUnitPrices(matches: List<Offer>) {
         matches.filter { isSet(it) }.forEach { it.note = "⚠ Set: başka ürünlerle birlikte satılıyor" }
         val withUnit = matches.filter { !isSet(it) }.mapNotNull { o -> unitPrice(o)?.let { o to it.first } }
+        // Karşılaştırma ölçüsü: en çok değerlendirilen ilan (çok satan gerçek fiyat); yoksa ortanca.
+        // (Pahalı ilanlar çoksa ortanca yukarı kayar ve uyarı kaçardı.)
+        val refOffer = matches.filter { !isSet(it) && countNum(it.ratingCount) >= 30 }.maxByOrNull { countNum(it.ratingCount) }
         // Birim fiyatı olmayan ürünler (telefon, ayakkabı): fiyatı diğerlerinin 2 katından fazlaysa uyar
         val plain = matches.filter { !isSet(it) }.map { it.price }.sorted()
         if (plain.size >= 3) {
-            val med = plain[plain.size / 2]
+            val med = refOffer?.price ?: plain[plain.size / 2]
             matches.filter { !isSet(it) && unitPrice(it) == null && it.price > med * 2 }.forEach {
                 it.note = "⚠ fiyatı diğerlerinin ${String.format(Locale("tr", "TR"), "%.1f", it.price / med)} katı"
             }
         }
         if (withUnit.size < 2) return
         val sorted = withUnit.map { it.second }.sorted()
-        val median = sorted[sorted.size / 2]
+        val median = refOffer?.let { unitPrice(it)?.first } ?: sorted[sorted.size / 2]
         val firstUnit = unitPrice(matches.first())?.first ?: Double.MAX_VALUE
         val best = withUnit.filter { it.second < firstUnit * 0.99 }.minByOrNull { it.second }?.first
         withUnit.forEach { (o, u) ->
@@ -2026,7 +2094,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 31\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 32\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
@@ -2110,7 +2178,7 @@ class MainActivity : Activity() {
         report.append("\nFARKLI MODEL / SERİ\n")
         val dm = others.filter { it.kind == Kind.DIFFERENT_MODEL }
         if (dm.isEmpty()) report.append("(yok)\n")
-        dm.take(25).forEach { o ->
+        dm.forEach { o ->
             report.append("- ").append(money(o.price)).append(" | ").append(o.site).append(" | ").append(o.otherModel)
                 .append("\n  ").append(o.title).append("\n")
         }
@@ -2125,7 +2193,7 @@ class MainActivity : Activity() {
         report.append("\nHAM KART ÖRNEKLERİ\n")
         sites.forEach { s ->
             offers.filter { it.site == s.name }.take(2).forEach { o ->
-                report.append("[").append(s.name).append("] ").append(o.raw).append("\n")
+                report.append("[").append(s.name).append("] ad: ").append(o.title).append(" || ").append(o.raw).append("\n")
             }
         }
     }

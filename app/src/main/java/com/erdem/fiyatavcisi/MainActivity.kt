@@ -655,6 +655,11 @@ class MainActivity : Activity() {
         return root
     }
 
+    private fun toggleBrowser() {
+        val showing = resultsScroll.visibility != View.VISIBLE
+        resultsScroll.visibility = if (showing) View.VISIBLE else View.GONE
+    }
+
     private fun showMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, if (resultsScroll.visibility == View.VISIBLE) "Tarayıcıyı göster" else "Sonuçları göster")

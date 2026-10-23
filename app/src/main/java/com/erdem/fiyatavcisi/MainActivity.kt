@@ -125,24 +125,16 @@ class MainActivity : Activity() {
     private val tlWhole = NumberFormat.getNumberInstance(Locale("tr", "TR")).apply {
         maximumFractionDigits = 0
     }
-    private var attempt = 0
     private var identity: Identity? = null
     private var userInput = ""
-    private var resolvePhase = false
     private var resolveType = ""     // barkod | kod | ad
     private var resolveQuery = ""    // kimlik aranırken kullanılan yazı (barkoddan bulunan ad olabilir)
     private var googleTried = false
-    private var simpleTried = false   // bu sitede sade arama denendi mi
     private val barcodeHits = mutableListOf<Offer>()   // barkodla sitelerde birebir bulunan ilanlar
     private var bookMode = false      // ISBN (978/979) = kitap: muadil yok, garanti yok
-    private var googlePhase = false
-    private var activeSites: List<Site> = emptyList()
     private val resolveLog = StringBuilder()
     private val prefs by lazy { getSharedPreferences("kimlik", Context.MODE_PRIVATE) }
-    private var detailPhase = false
     private val detailQueue = mutableListOf<Offer>()
-    private var detailIndex = 0
-    private var detailAttempt = 0
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
     private val detailJs = """
@@ -226,7 +218,6 @@ class MainActivity : Activity() {
     """.trimIndent()
 
     private lateinit var input: EditText
-    private lateinit var web: WebView
     private lateinit var resultsScroll: ScrollView
     private lateinit var results: LinearLayout
     private lateinit var status: TextView
@@ -238,12 +229,7 @@ class MainActivity : Activity() {
     private val siteSummary = mutableListOf<String>()
 
     private var running = false
-    private var index = 0
     private var query = ""
-    private var token = 0
-    private var extractScheduled = false
-    private var httpStatus = 0
-    private var loadError = ""
 
     /**
      * Ürün kartı okuyucu. Her ürün linkinden yukarı doğru çıkıp yalnızca o ürünü içeren
@@ -369,7 +355,6 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = ink
         setContentView(buildUi())
-        setupWebView()
     }
 
     // ---------- Arayüz ----------
@@ -400,7 +385,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 23", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 24", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -434,17 +419,20 @@ class MainActivity : Activity() {
         actions.addView(button("Paylaş") { shareReport() }, lp())
         root.addView(actions)
 
-        status = label("Ürünü yaz, Ara'ya bas. 6 site sırayla taranır (~1 dk).", 14f, ink).apply {
+        status = label("Ürünü yaz ya da barkod numarasını gir, Ara'ya bas. 6 site aynı anda taranır.", 14f, ink).apply {
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         root.addView(status)
 
         // Tarayıcı arkada tam boyutta durur, sonuç listesi üstünü kapatır
         val stack = FrameLayout(this)
-        web = WebView(this)
-        stack.addView(web, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        repeat(poolSize) {
+            val v = createWeb()
+            pool.add(v)
+            stack.addView(v, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
         resultsScroll = ScrollView(this).apply { setBackgroundColor(paper) }
         results = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -464,11 +452,28 @@ class MainActivity : Activity() {
         browserBtn.text = if (showing) "Tarayıcıyı göster" else "Sonuçları göster"
     }
 
-    // ---------- Tarayıcı ----------
+    // ---------- Tarayıcı havuzu (her site için ayrı, aynı anda çalışır) ----------
+
+    /** Bir tarayıcının o anki iş numarası ve ana sayfa hataları */
+    private class Slot {
+        var gen = 0
+        var httpStatus = 0
+        var loadError = ""
+    }
+
+    private val pool = mutableListOf<WebView>()
+    private val slots = HashMap<WebView, Slot>()
+    private var phaseGen = 0
+    private var startedAt = 0L
+    private var resolvedAt = 0L
+    private var finished = false
+    private var savedExact: Set<String> = emptySet()
+    private val poolSize = 6
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        web.settings.apply {
+    private fun createWeb(): WebView {
+        val v = WebView(this)
+        v.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             loadWithOverviewMode = true
@@ -479,40 +484,125 @@ class MainActivity : Activity() {
                 .replace(Regex("Version/\\d+\\.\\d+ "), "")
         }
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
-
-        web.webViewClient = object : WebViewClient() {
+        CookieManager.getInstance().setAcceptThirdPartyCookies(v, true)
+        val slot = Slot()
+        slots[v] = slot
+        v.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val scheme = request.url.scheme ?: ""
                 return scheme != "http" && scheme != "https"
             }
 
-            override fun onPageFinished(view: WebView, url: String) {
-                if (!running || extractScheduled) return
-                extractScheduled = true
-                val my = token
-                if (googlePhase) {
-                    handler.postDelayed({ if (my == token) googleExtract() }, 3000)
-                    return
-                }
-                if (detailPhase) {
-                    handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 1500);", null) }, 2500)
-                    handler.postDelayed({ if (my == token) detailExtract() }, 5000)
-                    return
-                }
-                // Kartlar kaydırdıkça yüklendiği için iki kez aşağı in, sonra oku
-                handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 2000);", null) }, 2500)
-                handler.postDelayed({ if (my == token) view.evaluateJavascript("window.scrollTo(0, 4000);", null) }, 4500)
-                handler.postDelayed({ if (my == token) extract() }, 7500)
-            }
-
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                if (request.isForMainFrame) httpStatus = response.statusCode
+                if (request.isForMainFrame) slot.httpStatus = response.statusCode
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) loadError = error.description?.toString() ?: "hata"
+                if (request.isForMainFrame) slot.loadError = error.description?.toString() ?: "hata"
             }
+        }
+        return v
+    }
+
+    private fun parseJson(raw: String?): JSONObject? = try {
+        JSONObject(JSONTokener(raw).nextValue() as String)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun elapsedText(ms: Long) = String.format(Locale("tr", "TR"), "%.1f sn", ms / 1000.0)
+
+    /**
+     * Sabit bekleme yerine: sayfayı açar, [js]'i kısa aralıklarla çalıştırır;
+     * [ready] "tamam" deyince ya da [maxMs] dolunca [done] çağrılır.
+     */
+    private fun loadAndPoll(
+        v: WebView, url: String, js: String, maxMs: Long, scroll: Boolean,
+        ready: (JSONObject?, Int) -> Boolean, done: (JSONObject?) -> Unit,
+    ) {
+        val slot = slots.getValue(v)
+        val my = ++slot.gen
+        slot.httpStatus = 0
+        slot.loadError = ""
+        v.loadUrl(url)
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        var n = 0
+        lateinit var tick: () -> Unit
+        tick = {
+            if (slot.gen == my) {
+                n++
+                if (scroll) v.evaluateJavascript("window.scrollBy(0, 1600);", null)
+                v.evaluateJavascript(js) { raw ->
+                    if (slot.gen == my) {
+                        val d = parseJson(raw)
+                        val elapsed = android.os.SystemClock.elapsedRealtime() - t0
+                        if (ready(d, n) || elapsed >= maxMs) {
+                            slot.gen++
+                            done(d)
+                        } else {
+                            handler.postDelayed({ tick() }, 700)
+                        }
+                    }
+                }
+            }
+        }
+        handler.postDelayed({ tick() }, 1000)
+    }
+
+    /** Bir sitede arama: ürünler yüklenip sayı sabitlenince okur; boş sayfada yeniden yükler, sonuç yoksa sade arama dener */
+    private fun runSite(
+        v: WebView, site: Site, q: String, simpleUsed: Boolean, reloaded: Boolean,
+        onDone: (JSONObject?, Boolean) -> Unit,
+    ) {
+        var last = -1
+        var stable = 0
+        val url = site.url(URLEncoder.encode(q, "UTF-8").replace("+", "%20"))
+        loadAndPoll(v, url, extractJs(site.linkPattern), maxMs = 13000, scroll = true, ready = { d, n ->
+            val c = d?.optJSONArray("cards")?.length() ?: 0
+            if (c > 0 && c == last) stable++ else stable = 0
+            last = c
+            d?.optBoolean("noResults") == true || (c > 0 && stable >= 1 && n >= 2)
+        }) { d ->
+            val cards = d?.optJSONArray("cards")?.length() ?: 0
+            val isBarcodeQ = q.replace(" ", "").all { it.isDigit() }
+            when {
+                // Sayfa hiç gelmediyse bir kez yeniden yükle
+                d != null && cards == 0 && d.optInt("links") == 0 && !reloaded ->
+                    runSite(v, site, q, simpleUsed, true, onDone)
+                // Sonuç yok ya da öneri listesi: bir kez sade aramayla (tür + ölçü) sor
+                !simpleUsed && !isBarcodeQ && (d?.optBoolean("noResults") == true || isIrrelevant(d, q)) &&
+                    simplifiedQuery(q).let { it.isNotEmpty() && norm(it) != norm(q) } ->
+                    runSite(v, site, simplifiedQuery(q), true, reloaded, onDone)
+                else -> onDone(d, simpleUsed)
+            }
+        }
+    }
+
+    /** Siteleri aynı anda tarar; her site bitince [onEach], hepsi bitince [onAll] */
+    private fun runSites(list: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
+        val gen = ++phaseGen
+        var left = list.size
+        status.text = "$label: ${list.size} site aynı anda taranıyor…"
+        list.forEachIndexed { i, site ->
+            val v = pool[i]
+            runSite(v, site, q, simpleUsed = false, reloaded = false) { d, simpleUsed ->
+                if (gen == phaseGen) {
+                    collect(site.name, d, q, simpleUsed, slots.getValue(v))
+                    left--
+                    status.text = "$label: ${list.size - left}/${list.size} site tamam · " +
+                        elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
+                    onEach()
+                    if (left == 0) onAll()
+                }
+            }
+        }
+    }
+
+    private fun stopAll() {
+        phaseGen++
+        pool.forEach { v ->
+            slots.getValue(v).gen++
+            v.stopLoading()
         }
     }
 
@@ -525,124 +615,73 @@ class MainActivity : Activity() {
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
         if (resultsScroll.visibility != View.VISIBLE) toggleBrowser()
+        stopAll()
         running = true
+        finished = false
+        startedAt = android.os.SystemClock.elapsedRealtime()
+        resolvedAt = 0L
         results.removeAllViews()
         report.setLength(0)
         resolveLog.setLength(0)
         identity = null
+        barcodeHits.clear()
+        detailQueue.clear()
+        savedExact = emptySet()
+        offers.clear()
+        siteSummary.clear()
+        val digits = userInput.replace(" ", "")
+        bookMode = digits.length == 13 && (digits.startsWith("978") || digits.startsWith("979"))
+        resolveType = inputType(userInput)
+        resolveQuery = userInput
 
-        // Bu giriş için daha önce bir ürün seçildiyse sormadan onu kullan
+        // Hafıza 1: bu giriş için daha önce bir paket seçildiyse sormadan onu kullan
         val saved = prefs.getString("q:" + norm(userInput), null)
         if (saved != null) {
-            resolveQuery = userInput
             identity = identityFromJson(saved)
             resolveLog.append("Kimlik hafızadan alındı.\n")
             startSearch()
             return
         }
-        // 1. adım: kimlik bul
-        barcodeHits.clear()
-        val digits = userInput.replace(" ", "")
-        bookMode = digits.length == 13 && (digits.startsWith("978") || digits.startsWith("979"))
-        resolveType = inputType(userInput)
-        resolveQuery = userInput
-        googleTried = false
-        googlePhase = false
-        resolvePhase = true
-        activeSites = resolverSites
-        query = userInput
-        index = 0
-        offers.clear()
-        siteSummary.clear()
-        runNext()
-    }
-
-    /** 2. adım: 6 siteyi her zaman kimliğin sabit aramasıyla tara */
-    private fun startSearch() {
-        resolvePhase = false
-        activeSites = sites
-        query = identity?.searchQuery ?: resolveQuery
-        index = 0
-        offers.clear()
-        siteSummary.clear()
-        runNext()
-    }
-
-    private fun runNext() {
-        if (index >= activeSites.size) {
-            if (resolvePhase) finishResolve() else startDetails()
-            return
-        }
-        val site = activeSites[index]
-        token++
-        val my = token
-        extractScheduled = false
-        httpStatus = 0
-        loadError = ""
-        attempt = 0
-        simpleTried = false
-        status.text = (if (resolvePhase) "Ürün tanınıyor " else "Fiyatlar: ") + "${index + 1}/${activeSites.size}: ${site.name}…"
-        val q = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
-        web.loadUrl(site.url(q))
-        handler.postDelayed({ if (my == token) extract() }, 25000)
-    }
-
-    private fun extract() {
-        val site = activeSites[index]
-        val my = ++token
-        web.evaluateJavascript(extractJs(site.linkPattern)) { raw ->
-            if (my != token) return@evaluateJavascript
-            val data = try {
-                JSONObject(JSONTokener(raw).nextValue() as String)
+        // Hafıza 2: barkoddan/addan daha önce bulunan ürün adı
+        prefs.getString("n:" + norm(userInput), null)?.let { s ->
+            try {
+                val j = JSONObject(s)
+                resolveQuery = j.getString("name")
+                bookMode = j.optBoolean("book", bookMode)
+                val ex = j.optJSONArray("exact")
+                savedExact = (0 until (ex?.length() ?: 0)).map { ex!!.getString(it) }.toSet()
+                resolveLog.append("Ürün adı hafızadan alındı: ").append(resolveQuery).append("\n")
+                startSearch()
+                return
             } catch (e: Exception) {
-                null
             }
-            val found = data?.optJSONArray("cards")?.length() ?: 0
-            val isBarcodeQ = query.replace(" ", "").all { it.isDigit() }
-            if (data?.optBoolean("noResults") == true || (!isBarcodeQ && !simpleTried && isIrrelevant(data))) {
-                // Uzun aramada site tüm kelimeleri şart koşabiliyor: bir kez sade aramayla (tür + ölçü) tekrar sor
-                val simple = simplifiedQuery(query)
-                val isBarcode = query.replace(" ", "").all { it.isDigit() }
-                if (!simpleTried && !isBarcode && simple.isNotEmpty() && norm(simple) != norm(query)) {
-                    simpleTried = true
-                    status.text = "${site.name}: sonuç yok, \"$simple\" ile tekrar soruluyor…"
-                    extractScheduled = false
-                    web.loadUrl(site.url(URLEncoder.encode(simple, "UTF-8").replace("+", "%20")))
-                    handler.postDelayed({ if (my == token) extract() }, 25000)
-                    return@evaluateJavascript
-                }
-                collect(site.name, data)
-                index++
-                handler.postDelayed({ if (my == token) runNext() }, 600)
-                return@evaluateJavascript
-            }
-            // Ürünler geç yüklenen sitelerde (ör. Teknosa) biraz daha kaydırıp 2 kez daha dene
-            if (found == 0 && data != null && data.optInt("links") == 0 && attempt < 2) {
-                attempt++
-                status.text = "${site.name}: sayfa boş geldi, yeniden yükleniyor (${attempt}. tekrar)…"
-                extractScheduled = false
-                web.reload()
-                handler.postDelayed({ if (my == token) extract() }, 25000)
-                return@evaluateJavascript
-            }
-            if (found == 0 && data != null && attempt < 2) {
-                attempt++
-                status.text = "${site.name}: ürünler bekleniyor (${attempt}. tekrar)…"
-                web.evaluateJavascript("window.scrollTo(0, ${3000 + attempt * 2500});", null)
-                handler.postDelayed({ if (my == token) extract() }, 3500)
-                return@evaluateJavascript
-            }
-            collect(site.name, data)
-            index++
-            handler.postDelayed({ if (my == token) runNext() }, 600)
         }
+        // 1. adım: kimlik bul (3 site aynı anda)
+        googleTried = false
+        query = userInput
+        runSites(resolverSites, userInput, "Ürün tanınıyor", onEach = {}) { finishResolve() }
+    }
+
+    /** 2. adım: 6 siteyi aynı anda, kimliğin sabit aramasıyla tara; sonuçlar geldikçe ekrana basılır */
+    private fun startSearch() {
+        resolvedAt = android.os.SystemClock.elapsedRealtime()
+        query = identity?.searchQuery ?: resolveQuery
+        offers.clear()
+        siteSummary.clear()
+        runSites(sites, query, "Fiyatlar", onEach = { render(final = false) }) { startDetails() }
+    }
+
+    /** Aynı ilanın farklı linklerle (takip ekleri) iki kez sayılmaması için anahtar */
+    private fun offerKey(o: Offer): String {
+        Regex("/dp/([A-Z0-9]{10})").find(o.link)?.let { return "amazon:" + it.groupValues[1] }
+        return o.link.substringBefore('#').substringBefore('?')
     }
 
     /** Sitenin kartlarının hiçbiri aranan kelimelerden en az ikisini içermiyorsa: öneri listesi, sonuç değil */
-    private fun isIrrelevant(d: JSONObject?): Boolean {
+    private fun isIrrelevant(d: JSONObject?, q: String = query): Boolean {
         val cards = d?.optJSONArray("cards") ?: return false
         if (cards.length() == 0) return false
-        val words = requiredWords(query) + codesIn(query).map { it.second }
+        val words = requiredWords(q) + codesIn(q).map { it.second }
         if (words.isEmpty()) return false
         return (0 until cards.length()).none { i ->
             val c = cards.getJSONObject(i)
@@ -651,52 +690,49 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun collect(name: String, d: JSONObject?) {
+    private fun collect(name: String, d: JSONObject?, q: String, simpleUsed: Boolean, slot: Slot) {
         val cards = d?.optJSONArray("cards")
         val count = cards?.length() ?: 0
-        val isBarcode = query.replace(" ", "").let { q -> q.length in 8..14 && q.all { it.isDigit() } }
-        if (count > 0 && !isBarcode) {
-            if (isIrrelevant(d)) {
-                siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor)")
-                status.text = "$name: sonuç yok"
-                return
-            }
+        val isBarcode = q.replace(" ", "").let { s -> s.length in 8..14 && s.all { it.isDigit() } }
+        if (count > 0 && !isBarcode && isIrrelevant(d, q)) {
+            siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor)")
+            return
         }
+        val seen = offers.map { offerKey(it) }.toHashSet()
         for (i in 0 until count) {
             val c = cards!!.getJSONObject(i)
-            offers.add(
-                Offer(
-                    site = name,
-                    title = c.optString("t"),
-                    price = c.optDouble("p"),
-                    listPrice = c.optDouble("lp"),
-                    basket = c.optBoolean("sepet"),
-                    rating = c.optString("r"),
-                    ratingCount = c.optString("rc"),
-                    link = c.optString("link"),
-                    raw = c.optString("raw"),
-                    badge = c.optString("badge"),
-                )
+            val o = Offer(
+                site = name,
+                title = c.optString("t"),
+                price = c.optDouble("p"),
+                listPrice = c.optDouble("lp"),
+                basket = c.optBoolean("sepet"),
+                rating = c.optString("r"),
+                ratingCount = c.optString("rc"),
+                link = c.optString("link"),
+                raw = c.optString("raw"),
+                badge = c.optString("badge"),
             )
+            if (seen.add(offerKey(o))) offers.add(o)
         }
         val block = d?.optString("block").orEmpty()
         val verdict = when {
-            d == null -> "AÇILMADI${if (loadError.isNotEmpty()) " ($loadError)" else ""}"
-            d?.optBoolean("noResults") == true -> "bu aramada sonuç yok (site \"bulunamadı\" dedi)"
-            count == 0 && (block.isNotEmpty() || httpStatus == 403 || httpStatus == 429) -> "ENGEL ($block $httpStatus)".trim()
+            d == null -> "AÇILMADI${if (slot.loadError.isNotEmpty()) " (${slot.loadError})" else ""}"
+            d.optBoolean("noResults") -> "bu aramada sonuç yok (site \"bulunamadı\" dedi)"
+            count == 0 && (block.isNotEmpty() || slot.httpStatus == 403 || slot.httpStatus == 429) ->
+                "ENGEL ($block ${slot.httpStatus})".trim()
             count == 0 -> {
-                val links = d?.optJSONArray("sampleLinks")
+                val links = d.optJSONArray("sampleLinks")
                 val sample = (0 until (links?.length() ?: 0)).joinToString("\n    ") { links!!.optString(it) }
-                "ÜRÜN KARTI BULUNAMADI (ürün linki ${d?.optInt("anchors") ?: 0}, toplam link ${d?.optInt("links") ?: 0})" +
+                "ÜRÜN KARTI BULUNAMADI (ürün linki ${d.optInt("anchors")}, toplam link ${d.optInt("links")})" +
                     (if (sample.isNotEmpty()) "\n    Örnek linkler:\n    $sample" else "") +
-                    "\n    Sayfa başlığı: ${d?.optString("title").orEmpty()}" +
-                    "\n    Sayfa metni: ${d?.optString("pageSample").orEmpty().ifEmpty { "(boş)" }}"
+                    "\n    Sayfa başlığı: ${d.optString("title")}" +
+                    "\n    Sayfa metni: ${d.optString("pageSample").ifEmpty { "(boş)" }}"
             }
-            else -> "$count ürün okundu" + (if (d?.optBoolean("fallback") == true) " (yedek yöntemle)" else "") +
-                (if (simpleTried) " (sade aramayla: \"${simplifiedQuery(query)}\")" else "")
+            else -> "$count ürün okundu" + (if (d.optBoolean("fallback")) " (yedek yöntemle)" else "") +
+                (if (simpleUsed) " (sade aramayla: \"${simplifiedQuery(q)}\")" else "")
         }
         siteSummary.add("$name: $verdict")
-        status.text = "$name: $verdict"
     }
 
     // ---------- Ürün kimliği ----------
@@ -795,7 +831,6 @@ class MainActivity : Activity() {
     }
 
     private fun finishResolve() {
-        resolvePhase = false
         val cands = buildCandidates()
         resolveLog.append("Tanıma: ").append(resolveQuery).append(" (").append(resolveType).append(")\n")
         siteSummary.forEach { resolveLog.append("  tanıma — ").append(it).append("\n") }
@@ -861,56 +896,42 @@ class MainActivity : Activity() {
     }
 
     private fun loadEngine() {
-        googlePhase = true
-        token++
-        val my = token
-        extractScheduled = false
+        val gen = ++phaseGen
         val (engine, url) = engines[engineIndex]
         status.text = "Barkod sitelerde yok, ürünün adı $engine'dan öğreniliyor…"
-        web.loadUrl(url + URLEncoder.encode(userInput.replace(" ", ""), "UTF-8"))
-        handler.postDelayed({ if (my == token) googleExtract() }, 20000)
+        loadAndPoll(pool[0], url + URLEncoder.encode(userInput.replace(" ", ""), "UTF-8"), googleJs,
+            maxMs = 9000, scroll = false,
+            ready = { d, _ -> (d?.optJSONArray("titles")?.length() ?: 0) >= 3 }) { d ->
+            if (gen == phaseGen) googleDone(d)
+        }
     }
 
-    private fun googleExtract() {
-        val my = ++token
-        web.evaluateJavascript(googleJs) { raw ->
-            if (my != token) return@evaluateJavascript
-            googlePhase = false
-            var pageInfo = ""
-            val titles = try {
-                val d = JSONObject(JSONTokener(raw).nextValue() as String)
-                pageInfo = d.optString("page") + " | " + d.optString("body")
-                val a = d.optJSONArray("titles")
-                (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
-            } catch (e: Exception) {
-                emptyList()
+    private fun googleDone(d: JSONObject?) {
+        val pageInfo = (d?.optString("page") ?: "") + " | " + (d?.optString("body") ?: "")
+        val a = d?.optJSONArray("titles")
+        val titles = (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
+        val engine = engines[engineIndex].first
+        resolveLog.append(engine).append(" sonuçları:\n")
+        titles.take(6).forEach { resolveLog.append("  · ").append(it.take(90)).append("\n") }
+        val name = commonName(titles).ifEmpty { barcodeName(titles) }
+        if (name.isEmpty()) {
+            resolveLog.append("  ").append(engine).append("'dan ad çıkarılamadı. Sayfa: ").append(pageInfo.take(160)).append("\n")
+            if (engineIndex + 1 < engines.size) {
+                engineIndex++
+                loadEngine()
+            } else {
+                startSearch()
             }
-            val engine = engines[engineIndex].first
-            resolveLog.append(engine).append(" sonuçları:\n")
-            titles.take(6).forEach { resolveLog.append("  · ").append(it.take(90)).append("\n") }
-            val name = commonName(titles).ifEmpty { barcodeName(titles) }
-            if (name.isEmpty()) {
-                resolveLog.append("  ").append(engine).append("'dan ad çıkarılamadı. Sayfa: ").append(pageInfo.take(160)).append("\n")
-                if (engineIndex + 1 < engines.size) {
-                    engineIndex++
-                    loadEngine()
-                } else {
-                    startSearch()
-                }
-                return@evaluateJavascript
-            }
-            resolveLog.append("Barkoddan bulunan ad: ").append(name).append("\n")
-            // Bulunan adla kimlik adımını tekrarla
-            resolveType = "ad"
-            resolveQuery = name
-            resolvePhase = true
-            activeSites = resolverSites
-            query = name
-            index = 0
-            offers.clear()
-            siteSummary.clear()
-            runNext()
+            return
         }
+        resolveLog.append("Barkoddan bulunan ad: ").append(name).append("\n")
+        // Bulunan adla kimlik adımını tekrarla
+        resolveType = "ad"
+        resolveQuery = name
+        query = name
+        offers.clear()
+        siteSummary.clear()
+        runSites(resolverSites, name, "Ürün tanınıyor", onEach = {}) { finishResolve() }
     }
 
     /** Başlıkların en az yarısında geçen kelimeler, ilk başlıktaki sırasıyla: "Tekerlekli Kitaplar Minik İtfaiye" */
@@ -1043,7 +1064,7 @@ class MainActivity : Activity() {
     }
 
     private fun forgetIdentity() {
-        prefs.edit().remove("q:" + norm(userInput)).apply()
+        prefs.edit().remove("q:" + norm(userInput)).remove("n:" + norm(userInput)).apply()
         input.setText(userInput)
         startTest()
     }
@@ -1223,66 +1244,53 @@ class MainActivity : Activity() {
 
     // ---------- Ürün sayfaları: garanti ve satıcı ----------
 
-    private fun startDetails() {
-        val links = offers.map { it.link }.toSet()
-        offers.addAll(barcodeHits.filter { it.link !in links })
+    /** Barkod ilanlarını sonuçlara katar, sınıflandırır, birebir eşleşmeleri işaretler (tekrar çağrılabilir) */
+    private fun prepareResults() {
+        val keys = offers.map { offerKey(it) }.toHashSet()
+        barcodeHits.filter { keys.add(offerKey(it)) }.forEach { offers.add(it) }
         classify()
-        val exactLinks = barcodeHits.map { it.link }.toSet()
-        offers.filter { it.link in exactLinks || it.exact }.forEach { it.kind = Kind.MATCH; it.exact = true }
+        val exactKeys = barcodeHits.map { offerKey(it) }.toSet() + savedExact
+        offers.filter { offerKey(it) in exactKeys || it.exact }.forEach { it.kind = Kind.MATCH; it.exact = true }
+    }
+
+    private fun startDetails() {
+        prepareResults()
         detailQueue.clear()
-        // En ucuz 6 eşleşmenin sayfasını aç (en çok bunlar önemli)
-        // Ürün sayfası (satıcı + garanti) sadece model kodlu ya da 1.000 TL üstü eşleşmelerde açılır;
-        // kitap, kozmetik, market gibi ürünlerde arama böylece çok kısalır
+        // Ürün sayfası (satıcı + garanti) sadece model kodlu ya da 1.000 TL üstü eşleşmelerde, hepsi aynı anda açılır
         detailQueue.addAll(
             offers.filter { it.kind == Kind.MATCH && !bookMode && (codesIn(it.title).isNotEmpty() || it.price >= 1000) }
                 .sortedBy { it.price }.take(5)
         )
-        detailIndex = 0
-        detailPhase = true
-        nextDetail()
-    }
-
-    private fun nextDetail() {
-        if (detailIndex >= detailQueue.size) {
-            detailPhase = false
-            running = false
-            web.stopLoading()
-            showFinal()
+        if (detailQueue.isEmpty()) {
+            finish()
             return
         }
-        val o = detailQueue[detailIndex]
-        token++
-        val my = token
-        extractScheduled = false
-        detailAttempt = 0
-        status.text = "Garanti ve satıcı kontrolü ${detailIndex + 1}/${detailQueue.size}: ${o.site}…"
-        web.loadUrl(o.link)
-        handler.postDelayed({ if (my == token) detailExtract() }, 20000)
+        val gen = ++phaseGen
+        var left = detailQueue.size
+        status.text = "Satıcı ve garanti: ${detailQueue.size} ürün sayfası aynı anda açılıyor…"
+        detailQueue.forEachIndexed { i, o ->
+            openDetail(pool[i], o, retried = false) {
+                if (gen == phaseGen) {
+                    left--
+                    render(final = false)
+                    status.text = "Satıcı ve garanti: ${detailQueue.size - left}/${detailQueue.size} · " +
+                        elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
+                    if (left == 0) finish()
+                }
+            }
+        }
     }
 
-    private fun detailExtract() {
-        val o = detailQueue[detailIndex]
-        val my = ++token
-        web.evaluateJavascript(detailJs) { raw ->
-            if (my != token) return@evaluateJavascript
-            try {
-                val d = JSONObject(JSONTokener(raw).nextValue() as String)
-                val broken = d.optString("page").contains("chrome-error") || d.optInt("len") < 1000
-                if (broken && detailAttempt < 2) {
-                    detailAttempt++
-                    status.text = "${o.site}: ürün sayfası açılamadı, yeniden deneniyor (${detailAttempt}. tekrar)…"
-                    extractScheduled = false
-                    web.loadUrl(o.link)
-                    handler.postDelayed({ if (my == token) detailExtract() }, 20000)
-                    return@evaluateJavascript
-                }
-                if (d.optInt("len") < 3000 && detailAttempt < 2) {
-                    detailAttempt++
-                    status.text = "${o.site}: ürün sayfası yükleniyor (${detailAttempt}. tekrar)…"
-                    web.evaluateJavascript("window.scrollTo(0, ${2000 + detailAttempt * 2000});", null)
-                    handler.postDelayed({ if (my == token) detailExtract() }, 3500)
-                    return@evaluateJavascript
-                }
+    private fun openDetail(v: WebView, o: Offer, retried: Boolean, done: () -> Unit) {
+        loadAndPoll(v, o.link, detailJs, maxMs = 9000, scroll = true, ready = { d, n ->
+            d != null && (d.optString("seller").isNotEmpty() || (d.optInt("len") >= 3000 && n >= 3))
+        }) { d ->
+            val broken = d == null || d.optString("page").contains("chrome-error") || d.optInt("len") < 1000
+            if (broken && !retried) {
+                openDetail(v, o, true, done)
+                return@loadAndPoll
+            }
+            if (d != null) {
                 o.warranty = d.optString("w")
                 o.warrantyLine = d.optString("wl")
                 o.seller = d.optString("seller").trim()
@@ -1292,12 +1300,28 @@ class MainActivity : Activity() {
                 o.sellerScore = d.optString("score")
                 o.detailPage = d.optString("page")
                 if (o.badge.isEmpty()) o.badge = d.optString("badge")
-            } catch (e: Exception) {
-                o.detailPage = "okunamadı: " + raw.take(80)
+            } else {
+                o.detailPage = "okunamadı"
             }
             o.detailChecked = true
-            detailIndex++
-            handler.postDelayed({ if (my == token) nextDetail() }, 500)
+            done()
+        }
+    }
+
+    private fun finish() {
+        if (finished) return
+        finished = true
+        running = false
+        stopAll()
+        render(final = true)
+        // Barkoddan bulunan adı hatırla: aynı barkod bir daha tanıma adımına girmez
+        if (identity == null && norm(resolveQuery) != norm(userInput)) {
+            val exact = offers.filter { it.exact }.map { offerKey(it) }
+            prefs.edit().putString("n:" + norm(userInput), JSONObject().apply {
+                put("name", resolveQuery)
+                put("book", bookMode)
+                put("exact", org.json.JSONArray(exact))
+            }.toString()).apply()
         }
     }
 
@@ -1323,12 +1347,14 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showFinal() {
+    private fun render(final: Boolean) {
+        prepareResults()
+        val y = resultsScroll.scrollY
         results.removeAllViews()
         val id = identity
         results.addView(label(
             if (id != null) "Ürün: ${id.label} · aranan: ${id.searchQuery}\nYanlış ürünse değiştirmek için dokun"
-            else "Ürün kimliği yok, yazdığın kelimelerle arandı. Tekrar sormak için dokun",
+            else "Aranan: $query\nYanlış ürünse yeniden tanımak için dokun",
             13f, ink, true
         ).apply {
             setBackgroundColor(Color.parseColor("#FFF6DD"))
@@ -1339,8 +1365,15 @@ class MainActivity : Activity() {
         val matches = offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }
         val others = offers.filter { it.kind != Kind.MATCH }.sortedBy { it.price }
 
-        status.text = if (matches.isEmpty()) "Eşleşen ürün bulunamadı. Aşağıda benzer sonuçlar var."
-        else "${matches.size} eşleşen teklif · en ucuz ${money(matches.first().price)} (${matches.first().site})"
+        val took = elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
+        if (final) {
+            status.text = (if (matches.isEmpty()) "Eşleşen ürün bulunamadı. Aşağıda benzer sonuçlar var."
+            else "${matches.size} eşleşen teklif · en ucuz ${money(matches.first().price)} (${matches.first().site})") +
+                " · $took"
+        } else if (matches.isNotEmpty()) {
+            status.text = "Taranıyor (${siteSummary.size}/${sites.size} site) · şimdilik en ucuz " +
+                "${money(matches.first().price)} (${matches.first().site}) · $took"
+        }
 
         if (matches.isNotEmpty()) {
             val cheapest = matches.first().price
@@ -1401,6 +1434,7 @@ class MainActivity : Activity() {
         siteSummary.forEach { results.addView(label("• $it", 13f, ink).apply { setPadding(dp(4), dp(2), dp(4), dp(2)) }) }
 
         buildReport(matches, others)
+        resultsScroll.post { resultsScroll.scrollTo(0, y) }
     }
 
     /** Eşleşenlerde: birim fiyatı en uygun olanı ve medyanın 3 katından pahalı olanları işaretle */
@@ -1483,7 +1517,10 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 23\nGiriş: ").append(userInput)
+        val total = android.os.SystemClock.elapsedRealtime() - startedAt
+        report.append("FİYAT AVCISI · DENEME 24\nGiriş: ").append(userInput)
+            .append("\nSüre: ").append(elapsedText(total))
+            .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")
@@ -1571,7 +1608,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        web.destroy()
+        pool.forEach { it.destroy() }
         super.onDestroy()
     }
 }

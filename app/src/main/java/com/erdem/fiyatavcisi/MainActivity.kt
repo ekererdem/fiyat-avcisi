@@ -383,7 +383,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 26", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 27", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -556,11 +556,14 @@ class MainActivity : Activity() {
         var last = -1
         var stable = 0
         val url = site.url(URLEncoder.encode(q, "UTF-8").replace("+", "%20"))
-        loadAndPoll(v, url, extractJs(site.linkPattern), maxMs = 13000, scroll = true, ready = { d, n ->
+        val isBarcodeSearch = q.replace(" ", "").all { it.isDigit() }
+        loadAndPoll(v, url, extractJs(site.linkPattern), maxMs = 9000, scroll = true, ready = { d, n ->
             val c = d?.optJSONArray("cards")?.length() ?: 0
             if (c > 0 && c == last) stable++ else stable = 0
             last = c
-            d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3)
+            d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3) ||
+                // Ürünler gelmiş ama hiçbiri aramayla ilgili değilse beklemeye gerek yok
+                (c > 0 && n >= 3 && !isBarcodeSearch && isIrrelevant(d, q))
         }) { d ->
             val cards = d?.optJSONArray("cards")?.length() ?: 0
             val isBarcodeQ = q.replace(" ", "").all { it.isDigit() }
@@ -581,12 +584,17 @@ class MainActivity : Activity() {
     private fun runSites(list: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
         val gen = ++phaseGen
         var left = list.size
+        val t0 = android.os.SystemClock.elapsedRealtime()
         status.text = "$label: ${list.size} site aynı anda taranıyor…"
         list.forEachIndexed { i, site ->
             val v = pool[i]
             runSite(v, site, q, simpleUsed = false, reloaded = false) { d, simpleUsed ->
                 if (gen == phaseGen) {
                     collect(site.name, d, q, simpleUsed, slots.getValue(v))
+                    if (siteSummary.isNotEmpty()) {
+                        siteSummary[siteSummary.size - 1] = siteSummary.last() + " · " +
+                            elapsedText(android.os.SystemClock.elapsedRealtime() - t0)
+                    }
                     left--
                     status.text = "$label: ${list.size - left}/${list.size} site tamam · " +
                         elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
@@ -1292,9 +1300,10 @@ class MainActivity : Activity() {
     }
 
     private fun openDetail(v: WebView, o: Offer, retried: Boolean, done: () -> Unit) {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         var lastLen = -1
         var steady = 0
-        loadAndPoll(v, o.link, detailJs, maxMs = 7000, scroll = false, ready = { d, n ->
+        loadAndPoll(v, o.link, detailJs, maxMs = 9000, scroll = false, ready = { d, n ->
             // Satıcı kutusu genelde ilk ekranın hemen altında: sayfa bir kez, o yüksekliğe kaydırılır
             if (n == 2) v.evaluateJavascript("window.scrollTo(0, 1200);", null)
             val len = d?.optInt("len") ?: 0
@@ -1315,7 +1324,7 @@ class MainActivity : Activity() {
                 o.warrantyType = d.optString("wt")
                 o.warrantyDuration = d.optString("wd")
                 o.sellerScore = d.optString("score")
-                o.detailPage = d.optString("page")
+                o.detailPage = d.optString("page") + " | " + elapsedText(android.os.SystemClock.elapsedRealtime() - t0)
                 if (o.badge.isEmpty()) o.badge = d.optString("badge")
             } else {
                 o.detailPage = "okunamadı"
@@ -1458,8 +1467,8 @@ class MainActivity : Activity() {
     /** "Deodorant 150 ml + Stick 45 ml" gibi birden fazla ürün içeren set */
     private fun isSet(o: Offer): Boolean {
         val t = o.title.lowercase(Locale("tr", "TR"))
-        val sizes = Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l)\\b").findAll(t).count()
-        return (t.contains("+") && sizes >= 2) || Regex("(?<![\\p{L}])(set|seti)(?![\\p{L}])").containsMatchIn(t)
+        // "Deodorant 150 ml + Stick 45 ml": artının iki yanında ürün var. "1+1" gibi kampanya yazıları set değil.
+        return Regex("[\\p{L}][^+]{0,12}\\+\\s*[\\p{L}]").containsMatchIn(t) && !Regex("[0-9]\\s*\\+\\s*[0-9]").containsMatchIn(t)
     }
 
     private fun markUnitPrices(matches: List<Offer>) {
@@ -1543,7 +1552,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 26\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 27\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

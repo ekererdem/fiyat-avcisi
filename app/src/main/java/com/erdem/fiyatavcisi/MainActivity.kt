@@ -659,7 +659,9 @@ class MainActivity : Activity() {
         googleTried = false
         query = userInput
         resolveSearchQuery = userInput
-        runSites(sites, userInput, "Ürün tanınıyor", onEach = {}) { finishResolve() }
+        // Barkodu bilmeyen siteler öneri listesi gösterebildiği için barkod tanıması 3 güvenilir sitede yapılır
+        val resolveOn = if (resolveType == "barkod") resolverSites else sites
+        runSites(resolveOn, userInput, "Ürün tanınıyor", onEach = {}) { finishResolve() }
     }
 
     /** 2. adım: 6 siteyi aynı anda, kimliğin sabit aramasıyla tara; sonuçlar geldikçe ekrana basılır */

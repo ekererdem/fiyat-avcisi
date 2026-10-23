@@ -383,7 +383,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 25", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 26", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -466,6 +466,7 @@ class MainActivity : Activity() {
     private var resolvedAt = 0L
     private var finished = false
     private var savedExact: Set<String> = emptySet()
+    private var resolveSearchQuery = ""   // tanıma adımında sitelere sorulan yazı
     private val poolSize = 6
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -657,7 +658,8 @@ class MainActivity : Activity() {
         // 1. adım: kimlik bul (3 site aynı anda)
         googleTried = false
         query = userInput
-        runSites(resolverSites, userInput, "Ürün tanınıyor", onEach = {}) { finishResolve() }
+        resolveSearchQuery = userInput
+        runSites(sites, userInput, "Ürün tanınıyor", onEach = {}) { finishResolve() }
     }
 
     /** 2. adım: 6 siteyi aynı anda, kimliğin sabit aramasıyla tara; sonuçlar geldikçe ekrana basılır */
@@ -856,7 +858,14 @@ class MainActivity : Activity() {
             cands.isEmpty() && resolveType == "barkod" && !googleTried -> googleLookup()
             cands.isEmpty() -> {
                 resolveLog.append("Kimlik bulunamadı; \"").append(resolveQuery).append("\" ile arandı.\n")
-                startSearch()
+                if (norm(resolveSearchQuery) == norm(resolveQuery)) {
+                    // Tanıma zaten 6 sitede bu aramayla yapıldı: aynı aramayı tekrar yapmaya gerek yok
+                    resolvedAt = android.os.SystemClock.elapsedRealtime()
+                    query = resolveQuery
+                    startDetails()
+                } else {
+                    startSearch()
+                }
             }
             cands.size == 1 || (resolveType == "barkod" && cands[0].count >= 2 * cands[1].count) -> {
                 chooseIdentity(cands[0])
@@ -929,7 +938,8 @@ class MainActivity : Activity() {
         query = name
         offers.clear()
         siteSummary.clear()
-        runSites(resolverSites, name, "Ürün tanınıyor", onEach = {}) { finishResolve() }
+        resolveSearchQuery = name
+        runSites(sites, name, "Ürün tanınıyor", onEach = {}) { finishResolve() }
     }
 
     /** Başlıkların en az yarısında geçen kelimeler, ilk başlıktaki sırasıyla: "Tekerlekli Kitaplar Minik İtfaiye" */
@@ -1256,7 +1266,7 @@ class MainActivity : Activity() {
         detailQueue.clear()
         // Ürün sayfası (satıcı + garanti) sadece model kodlu ya da 1.000 TL üstü eşleşmelerde, hepsi aynı anda açılır
         detailQueue.addAll(
-            offers.filter { it.kind == Kind.MATCH && !bookMode && (codesIn(it.title).isNotEmpty() || it.price >= 1000) }
+            offers.filter { it.kind == Kind.MATCH && !bookMode && !isSet(it) && (codesIn(it.title).isNotEmpty() || it.price >= 1000) }
                 .sortedBy { it.price }.take(5)
         )
         if (detailQueue.isEmpty()) {
@@ -1282,11 +1292,13 @@ class MainActivity : Activity() {
     private fun openDetail(v: WebView, o: Offer, retried: Boolean, done: () -> Unit) {
         var lastLen = -1
         var steady = 0
-        loadAndPoll(v, o.link, detailJs, maxMs = 10000, scroll = true, ready = { d, n ->
+        loadAndPoll(v, o.link, detailJs, maxMs = 7000, scroll = false, ready = { d, n ->
+            // Satıcı kutusu genelde ilk ekranın hemen altında: sayfa bir kez, o yüksekliğe kaydırılır
+            if (n == 2) v.evaluateJavascript("window.scrollTo(0, 1200);", null)
             val len = d?.optInt("len") ?: 0
             if (len > 0 && Math.abs(len - lastLen) < 200) steady++ else steady = 0
             lastLen = len
-            d != null && n >= 3 && steady >= 2 && (d.optString("seller").isNotEmpty() || len >= 6000)
+            d != null && n >= 2 && (d.optString("seller").isNotEmpty() || (steady >= 2 && len >= 3000))
         }) { d ->
             val broken = d == null || d.optString("page").contains("chrome-error") || d.optInt("len") < 1000
             if (broken && !retried) {
@@ -1441,8 +1453,16 @@ class MainActivity : Activity() {
     }
 
     /** Eşleşenlerde: birim fiyatı en uygun olanı ve medyanın 3 katından pahalı olanları işaretle */
+    /** "Deodorant 150 ml + Stick 45 ml" gibi birden fazla ürün içeren set */
+    private fun isSet(o: Offer): Boolean {
+        val t = o.title.lowercase(Locale("tr", "TR"))
+        val sizes = Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l)\\b").findAll(t).count()
+        return (t.contains("+") && sizes >= 2) || Regex("(?<![\\p{L}])(set|seti)(?![\\p{L}])").containsMatchIn(t)
+    }
+
     private fun markUnitPrices(matches: List<Offer>) {
-        val withUnit = matches.mapNotNull { o -> unitPrice(o)?.let { o to it.first } }
+        matches.filter { isSet(it) }.forEach { it.note = "⚠ Set: başka ürünlerle birlikte satılıyor" }
+        val withUnit = matches.filter { !isSet(it) }.mapNotNull { o -> unitPrice(o)?.let { o to it.first } }
         if (withUnit.size < 2) return
         val sorted = withUnit.map { it.second }.sorted()
         val median = sorted[sorted.size / 2]
@@ -1521,7 +1541,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 25\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 26\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

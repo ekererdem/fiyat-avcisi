@@ -328,7 +328,7 @@ class MainActivity : Activity() {
             text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
             var title = '';
             // Kargo, rozet, puan gibi satırlar ürün adı değildir
-            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:/i;
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk/i;
             cands.forEach(function(c){
               c = (c || '').replace(/\s+/g, ' ').trim();
               if (c.length >= 10 && c.length <= 250 && c.length > title.length && !notTitle.test(c)) title = c;
@@ -392,7 +392,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 21", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 22", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -590,7 +590,8 @@ class MainActivity : Activity() {
                 null
             }
             val found = data?.optJSONArray("cards")?.length() ?: 0
-            if (data?.optBoolean("noResults") == true) {
+            val isBarcodeQ = query.replace(" ", "").all { it.isDigit() }
+            if (data?.optBoolean("noResults") == true || (!isBarcodeQ && !simpleTried && isIrrelevant(data))) {
                 // Uzun aramada site tüm kelimeleri şart koşabiliyor: bir kez sade aramayla (tür + ölçü) tekrar sor
                 val simple = simplifiedQuery(query)
                 val isBarcode = query.replace(" ", "").all { it.isDigit() }
@@ -629,17 +630,25 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Sitenin kartlarının hiçbiri aranan kelimelerden en az ikisini içermiyorsa: öneri listesi, sonuç değil */
+    private fun isIrrelevant(d: JSONObject?): Boolean {
+        val cards = d?.optJSONArray("cards") ?: return false
+        if (cards.length() == 0) return false
+        val words = requiredWords(query) + codesIn(query).map { it.second }
+        if (words.isEmpty()) return false
+        return (0 until cards.length()).none { i ->
+            val c = cards.getJSONObject(i)
+            val nt = norm(c.optString("t") + " " + c.optString("raw"))
+            words.count { nt.contains(it) } >= minOf(2, words.size)
+        }
+    }
+
     private fun collect(name: String, d: JSONObject?) {
         val cards = d?.optJSONArray("cards")
         val count = cards?.length() ?: 0
         val isBarcode = query.replace(" ", "").let { q -> q.length in 8..14 && q.all { it.isDigit() } }
         if (count > 0 && !isBarcode) {
-            val words = requiredWords(query) + codesIn(query).map { it.second }
-            val anyRelevant = words.isEmpty() || (0 until count).any { i ->
-                val nt = norm(cards!!.getJSONObject(i).optString("t"))
-                words.count { nt.contains(it) } >= minOf(2, words.size)
-            }
-            if (!anyRelevant) {
+            if (isIrrelevant(d)) {
                 siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor)")
                 status.text = "$name: sonuç yok"
                 return
@@ -747,10 +756,16 @@ class MainActivity : Activity() {
     /** Sade arama: markasız, miktarsız; ürün türü + ölçü ("ataş no 6") */
     private fun simplifiedQuery(q: String): String {
         val (words, hard) = querySpec(q)
-        val typeNorm = words.drop(1).firstOrNull() ?: words.firstOrNull() ?: return ""
-        val type = q.split(Regex("[\\s:]+")).firstOrNull { norm(it).startsWith(typeNorm) } ?: typeNorm
-        val specs = hard.map { it.replace(Regex("([a-zçğıöşü]+)([0-9]+)"), "$1 $2") }
-        return (listOf(type) + specs).joinToString(" ")
+        val original = q.split(Regex("[\\s:]+")).filter { it.isNotBlank() }
+        val pick = { ws: List<String> -> ws.mapNotNull { w -> original.firstOrNull { norm(it).startsWith(w) } ?: w } }
+        val parts = when {
+            hard.isNotEmpty() -> pick(listOfNotNull(words.drop(1).firstOrNull() ?: words.firstOrNull())) +
+                hard.map { it.replace(Regex("([a-z]+)([0-9]+)"), "$1 $2") }
+            bookMode -> pick(words.take(4))
+            else -> pick(words.drop(1).take(3))
+        }
+        // Tek kelimelik sade arama ("Kitap") alakasız sonuç getirir
+        return if (parts.size >= 2) parts.joinToString(" ") else ""
     }
 
     /** Aramadaki zorunlu kelimeler (tür kelimeleri + şart olan ölçüler) */
@@ -1258,8 +1273,18 @@ class MainActivity : Activity() {
                 val noWarranty = d.optString("w").isEmpty() && d.optString("wt").isEmpty() && d.optString("wd").isEmpty()
                 if (noWarranty && !bookMode && codesIn(o.title).isNotEmpty() && detailAttempt < 3) {
                     detailAttempt = 3
-                    status.text = "${o.site}: garanti bilgisi için sayfanın altına iniliyor…"
-                    web.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
+                    status.text = "${o.site}: garanti bilgisi için özellikler açılıyor…"
+                    web.evaluateJavascript("""
+                        (function(){
+                          var re = /^(ürün özellikleri|özellikler|tüm özellikler|teknik özellikler|ürün bilgileri)$/i;
+                          var els = document.querySelectorAll('button, a, li, span, div, h2, h3');
+                          for (var i = 0; i < els.length; i++) {
+                            var tx = (els[i].innerText || '').trim();
+                            if (re.test(tx)) { try { els[i].click(); } catch (e) {} }
+                          }
+                          window.scrollTo(0, document.body.scrollHeight);
+                        })()
+                    """.trimIndent(), null)
                     handler.postDelayed({ if (my == token) detailExtract() }, 3500)
                     return@evaluateJavascript
                 }
@@ -1389,9 +1414,11 @@ class MainActivity : Activity() {
         if (withUnit.size < 2) return
         val sorted = withUnit.map { it.second }.sorted()
         val median = sorted[sorted.size / 2]
+        val firstUnit = unitPrice(matches.first())?.first ?: Double.MAX_VALUE
+        val best = withUnit.filter { it.second < firstUnit * 0.99 }.minByOrNull { it.second }?.first
         withUnit.forEach { (o, u) ->
             o.note = when {
-                u == sorted.first() && o !== matches.first() -> "★ birim fiyatı en uygun"
+                o === best -> "★ birim fiyatı en uygun"
                 u > median * 3 -> "⚠ birim fiyatı diğerlerinin ${(u / median).toInt()} katı"
                 else -> ""
             }
@@ -1461,7 +1488,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 21\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 22\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

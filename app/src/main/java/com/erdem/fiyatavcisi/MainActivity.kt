@@ -205,6 +205,16 @@ class MainActivity : Activity() {
             }
             sline = 'TEŞHİS: ' + parts.join(' || ');
           }
+          // Ekranda yoksa sayfanın arka plan verisinde ara (Trendyol satıcıyı kaydırınca yükler ama veride baştan yazar)
+          if (!seller) {
+            try {
+              var html = document.documentElement.innerHTML;
+              var hm = html.match(/"(?:merchantName|sellerName|storeName|shopName|merchantTitle)"\s*:\s*"([^"\\]{2,40})"/) ||
+                       html.match(/"merchant"\s*:\s*\{[^{}]{0,300}?"name"\s*:\s*"([^"\\]{2,40})"/) ||
+                       html.match(/"seller"\s*:\s*\{[^{}]{0,300}?"name"\s*:\s*"([^"\\]{2,40})"/);
+              if (hm && !junk.test(hm[1])) { seller = hm[1]; if (!sline || sline.indexOf('TEŞHİS') === 0) sline = 'sayfa verisinden: ' + hm[0].slice(0, 120); }
+            } catch (e) {}
+          }
           var sc = (sline.match(/(?:^|[\s|])((?:10|[0-9])[.,]\d)(?=[\s|]|$)/) || [])[1] || '';
           var dbg = [];
           for (var j = 0; j < lines.length && dbg.length < 3; j++) {
@@ -383,7 +393,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 27", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 28", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -555,16 +565,27 @@ class MainActivity : Activity() {
     ) {
         var last = -1
         var stable = 0
+        // Bazı siteler (Hepsiburada) sadece ekrandaki ürünleri tutar: her ölçümde görülen kartlar biriktirilir
+        val acc = LinkedHashMap<String, JSONObject>()
         val url = site.url(URLEncoder.encode(q, "UTF-8").replace("+", "%20"))
         val isBarcodeSearch = q.replace(" ", "").all { it.isDigit() }
         loadAndPoll(v, url, extractJs(site.linkPattern), maxMs = 9000, scroll = true, ready = { d, n ->
-            val c = d?.optJSONArray("cards")?.length() ?: 0
+            d?.optJSONArray("cards")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val c = arr.getJSONObject(i)
+                    val k = c.optString("link").substringBefore('#').substringBefore('?')
+                    if (k.isNotEmpty() && k !in acc) acc[k] = c
+                }
+            }
+            val c = acc.size
             if (c > 0 && c == last) stable++ else stable = 0
             last = c
             d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3) ||
                 // Ürünler gelmiş ama hiçbiri aramayla ilgili değilse beklemeye gerek yok
                 (c > 0 && n >= 3 && !isBarcodeSearch && isIrrelevant(d, q))
-        }) { d ->
+        }) { d0 ->
+            // Sonuç: son ölçümün sayfa bilgisi + biriken bütün kartlar
+            val d = d0?.also { if (acc.isNotEmpty()) it.put("cards", org.json.JSONArray(acc.values.toList())) }
             val cards = d?.optJSONArray("cards")?.length() ?: 0
             val isBarcodeQ = q.replace(" ", "").all { it.isDigit() }
             when {
@@ -1422,7 +1443,10 @@ class MainActivity : Activity() {
             markUnitPrices(matches)
             matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
         }
+        // Eşleşen ürün varsa muadil ancak birim fiyatı ondan ucuzsa anlamlıdır (pahalı taklitler gösterilmez)
+        val bestMatchUnit = matches.filter { !isSet(it) }.mapNotNull { unitPrice(it)?.first }.minOrNull()
         val muadils = collapse(others.filter { it.kind == Kind.MUADIL })
+            .filter { m -> bestMatchUnit == null || (unitPrice(m)?.first ?: Double.MAX_VALUE) < bestMatchUnit }
             .sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
         if (muadils.isNotEmpty()) {
             sectionTitle("Muadiller — aynı tür ve ölçü, birim fiyata göre", green)
@@ -1468,7 +1492,7 @@ class MainActivity : Activity() {
     private fun isSet(o: Offer): Boolean {
         val t = o.title.lowercase(Locale("tr", "TR"))
         // "Deodorant 150 ml + Stick 45 ml": artının iki yanında ürün var. "1+1" gibi kampanya yazıları set değil.
-        return Regex("[\\p{L}][^+]{0,12}\\+\\s*[\\p{L}]").containsMatchIn(t) && !Regex("[0-9]\\s*\\+\\s*[0-9]").containsMatchIn(t)
+        return Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l|adet)\\b[^+]{0,4}\\+\\s*[\\p{L}]").containsMatchIn(t)
     }
 
     private fun markUnitPrices(matches: List<Offer>) {
@@ -1552,7 +1576,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 27\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 28\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
@@ -1591,7 +1615,10 @@ class MainActivity : Activity() {
         }
 
         report.append("\nMUADİLLER (birim fiyata göre)\n")
-        val mu = collapse(others.filter { it.kind == Kind.MUADIL }).sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
+        val bestUnit = matches.filter { !isSet(it) }.mapNotNull { unitPrice(it)?.first }.minOrNull()
+        val mu = collapse(others.filter { it.kind == Kind.MUADIL })
+            .filter { m -> bestUnit == null || (unitPrice(m)?.first ?: Double.MAX_VALUE) < bestUnit }
+            .sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
         if (mu.isEmpty()) report.append("(yok)\n")
         mu.forEach { o ->
             report.append("- ").append(money(o.price)).append(" ").append(unitText(o).ifEmpty { "(miktar yok)" }).append(" | ").append(o.site)

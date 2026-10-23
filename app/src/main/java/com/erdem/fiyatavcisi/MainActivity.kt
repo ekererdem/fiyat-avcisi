@@ -301,7 +301,7 @@ class MainActivity : Activity() {
               var pt = p.innerText || '';
               if (n > 1 || pt.length > 1200) break;
               // Tek sonuçlu sayfada kart sınırı bulunamaz: sayfa başlığına/filtrelere ulaşınca dur
-              if (n === 1 && /(^|\n)\s*(sırala|filtrele)\s*(\n|$)|ile ilgili\s*[0-9]+\s*ürün|sponsorlu ürünler/i.test(pt)) break;
+              if (n === 1 && /(^|\n)\s*(sırala|filtrele)\s*(\n|$)|ile ilgili\s*[0-9]+\s*ürün|sponsorlu ürünler|teslimat konumu|giriş yap|hesabım|sepetim|kategoriler/i.test(pt)) break;
               el = p;
             }
             var text = el.innerText || '';
@@ -312,7 +312,7 @@ class MainActivity : Activity() {
             var ok = ps.filter(function(x){ return x >= max * 0.4; });
             var price = Math.min.apply(null, ok);
 
-            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk|sponsorlu|reklam|uygulamada aç|kapılarını|daha iyi bir deneyim/i;
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk|sponsorlu|reklam|uygulamada aç|kapılarını|daha iyi bir deneyim|amazon.un seçimi|çok satan|en beğenilen|öne çıkan|fırsat ürünü/i;
             function okTitle(c){ c = (c || '').replace(/\s+/g, ' ').trim(); return (c.length >= 10 && c.length <= 250 && !notTitle.test(c) && !priceOne.test(c)) ? c : ''; }
             // Ürün adresindeki ad: /Tekerlekli-Kitap-Minik-Itfaiye/dp/... ya da /marka/urun-adi-p-123
             var slug = '';
@@ -325,14 +325,12 @@ class MainActivity : Activity() {
             } catch (e) {}
             var h = el.querySelector('h2,h3,h4');
             var title = okTitle(a.getAttribute('title')) || okTitle(a.innerText) || okTitle(a.getAttribute('aria-label')) || (h ? okTitle(h.innerText) : '');
-            if (!title) {
-              text.split('\n').forEach(function(s){ var c = okTitle(s); if (c.length > title.length) title = c; });
-              // Kart metninden seçilen satır adresteki adla hiç örtüşmüyorsa adresteki adı tercih et
-              if (slug && title) {
-                var sw = slug.toLowerCase().split(' ').filter(function(w){ return w.length >= 4; });
-                var hitw = sw.filter(function(w){ return title.toLowerCase().indexOf(w) >= 0; }).length;
-                if (sw.length >= 2 && hitw === 0) title = slug;
-              }
+            if (!title) text.split('\n').forEach(function(s){ var c = okTitle(s); if (c.length > title.length) title = c; });
+            // Seçilen başlık adresteki adla hiç örtüşmüyorsa (rozet, slogan vb.) adresteki adı tercih et
+            if (slug && title) {
+              var sw = slug.toLowerCase().split(' ').filter(function(w){ return w.length >= 4; });
+              var hitw = sw.filter(function(w){ return title.toLowerCase().indexOf(w) >= 0; }).length;
+              if (sw.length >= 2 && hitw === 0) title = slug;
             }
             if (!title) title = slug;
             if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
@@ -385,7 +383,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 24", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 25", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -561,7 +559,7 @@ class MainActivity : Activity() {
             val c = d?.optJSONArray("cards")?.length() ?: 0
             if (c > 0 && c == last) stable++ else stable = 0
             last = c
-            d?.optBoolean("noResults") == true || (c > 0 && stable >= 1 && n >= 2)
+            d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3)
         }) { d ->
             val cards = d?.optJSONArray("cards")?.length() ?: 0
             val isBarcodeQ = q.replace(" ", "").all { it.isDigit() }
@@ -1282,8 +1280,13 @@ class MainActivity : Activity() {
     }
 
     private fun openDetail(v: WebView, o: Offer, retried: Boolean, done: () -> Unit) {
-        loadAndPoll(v, o.link, detailJs, maxMs = 9000, scroll = true, ready = { d, n ->
-            d != null && (d.optString("seller").isNotEmpty() || (d.optInt("len") >= 3000 && n >= 3))
+        var lastLen = -1
+        var steady = 0
+        loadAndPoll(v, o.link, detailJs, maxMs = 10000, scroll = true, ready = { d, n ->
+            val len = d?.optInt("len") ?: 0
+            if (len > 0 && Math.abs(len - lastLen) < 200) steady++ else steady = 0
+            lastLen = len
+            d != null && n >= 3 && steady >= 2 && (d.optString("seller").isNotEmpty() || len >= 6000)
         }) { d ->
             val broken = d == null || d.optString("page").contains("chrome-error") || d.optInt("len") < 1000
             if (broken && !retried) {
@@ -1518,7 +1521,8 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 24\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 25\nGiriş: ").append(userInput)
+            .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
@@ -1593,6 +1597,7 @@ class MainActivity : Activity() {
 
     private fun copyReport() {
         if (report.isEmpty()) return
+        if (running) Toast.makeText(this, "Arama henüz bitmedi; rapor yarım olabilir", Toast.LENGTH_LONG).show()
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Fiyat Avcısı raporu", report.toString()))
         Toast.makeText(this, "Rapor kopyalandı", Toast.LENGTH_SHORT).show()

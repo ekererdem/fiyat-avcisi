@@ -1262,7 +1262,7 @@ class MainActivity : Activity() {
                 .sortedBy { it.price }.take(5)
         )
         if (detailQueue.isEmpty()) {
-            finish()
+            finishSearch()
             return
         }
         val gen = ++phaseGen
@@ -1275,7 +1275,7 @@ class MainActivity : Activity() {
                     render(final = false)
                     status.text = "Satıcı ve garanti: ${detailQueue.size - left}/${detailQueue.size} · " +
                         elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
-                    if (left == 0) finish()
+                    if (left == 0) finishSearch()
                 }
             }
         }
@@ -1308,7 +1308,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun finish() {
+    private fun finishSearch() {
         if (finished) return
         finished = true
         running = false

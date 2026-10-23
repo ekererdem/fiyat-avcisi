@@ -312,7 +312,10 @@ class MainActivity : Activity() {
                 if (pat.test(inner[j].href)) { var k = keyOf(inner[j].href); if (!keys[k]) { keys[k] = 1; n++; } }
               }
               // Başka ürün içeriyorsa ya da sayfanın büyük kısmıysa kartın dışına çıktık demektir
-              if (n > 1 || (p.innerText || '').length > 1200) break;
+              var pt = p.innerText || '';
+              if (n > 1 || pt.length > 1200) break;
+              // Tek sonuçlu sayfada kart sınırı bulunamaz: sayfa başlığına/filtrelere ulaşınca dur
+              if (n === 1 && /(^|\n)\s*(sırala|filtrele)\s*(\n|$)|ile ilgili\s*[0-9]+\s*ürün|sponsorlu ürünler/i.test(pt)) break;
               el = p;
             }
             var text = el.innerText || '';
@@ -323,24 +326,29 @@ class MainActivity : Activity() {
             var ok = ps.filter(function(x){ return x >= max * 0.4; });
             var price = Math.min.apply(null, ok);
 
-            var cands = [a.getAttribute('title') || '', a.getAttribute('aria-label') || ''];
-            var h = el.querySelector('h2,h3,h4'); if (h) cands.push(h.innerText || '');
-            text.split('\n').forEach(function(s){ s = s.trim(); if (!priceOne.test(s)) cands.push(s); });
-            var title = '';
-            // Kargo, rozet, puan gibi satırlar ürün adı değildir
-            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk/i;
-            cands.forEach(function(c){
-              c = (c || '').replace(/\s+/g, ' ').trim();
-              if (c.length >= 10 && c.length <= 250 && c.length > title.length && !notTitle.test(c)) title = c;
-            });
-            // Ad bulunamazsa linkin içindeki ürün adını kullan; resim açıklaması ("siyah zemin üzerinde...") en son çare
+            var notTitle = /teslimat|kargo|sepete|stokta|kupon|favoriledi|değerlendirilen|ziyaret edilen|en çok|satıldı|ürün puanı|son [0-9]+ gün|kişi ekledi|yıldız üzerinden|satın alma seçenekleri|ürün sayfalarını|^yaş:|ile ilgili|ürün bulduk|sonuç bulduk|sponsorlu|reklam|uygulamada aç|kapılarını|daha iyi bir deneyim/i;
+            function okTitle(c){ c = (c || '').replace(/\s+/g, ' ').trim(); return (c.length >= 10 && c.length <= 250 && !notTitle.test(c) && !priceOne.test(c)) ? c : ''; }
+            // Ürün adresindeki ad: /Tekerlekli-Kitap-Minik-Itfaiye/dp/... ya da /marka/urun-adi-p-123
+            var slug = '';
+            try {
+              var segs = a.pathname.split('/').filter(function(x){ return x; });
+              var di = segs.indexOf('dp');
+              var sg = decodeURIComponent(di > 0 ? segs[di - 1] : (segs.pop() || ''));
+              sg = sg.replace(/\.html?/i, '').replace(/^_+/, '').replace(/-p(m)?-[A-Za-z0-9]+.*$/, '').replace(/-[0-9]{5,}$/, '').replace(/[-_]+/g, ' ').trim();
+              if (sg.length >= 10 && /[a-zçğıöşü]/i.test(sg)) slug = sg;
+            } catch (e) {}
+            var h = el.querySelector('h2,h3,h4');
+            var title = okTitle(a.getAttribute('title')) || okTitle(a.innerText) || okTitle(a.getAttribute('aria-label')) || (h ? okTitle(h.innerText) : '');
             if (!title) {
-              try {
-                var seg = decodeURIComponent(a.pathname.split('/').filter(function(x){ return x; }).pop() || '');
-                seg = seg.replace(/\.html?/i, '').replace(/^_+/, '').replace(/-p(m)?-[A-Za-z0-9]+/, '').replace(/-[0-9]{5,}/, '').replace(/[-_]+/g, ' ').trim();
-                if (seg.length >= 10) title = seg;
-              } catch (e) {}
+              text.split('\n').forEach(function(s){ var c = okTitle(s); if (c.length > title.length) title = c; });
+              // Kart metninden seçilen satır adresteki adla hiç örtüşmüyorsa adresteki adı tercih et
+              if (slug && title) {
+                var sw = slug.toLowerCase().split(' ').filter(function(w){ return w.length >= 4; });
+                var hitw = sw.filter(function(w){ return title.toLowerCase().indexOf(w) >= 0; }).length;
+                if (sw.length >= 2 && hitw === 0) title = slug;
+              }
             }
+            if (!title) title = slug;
             if (!title) { var img = el.querySelector('img[alt]'); if (img) title = (img.getAttribute('alt') || '').trim(); }
 
             var rm = text.match(/(?:^|\s)([1-4][.,]\d|5[.,]0)(?=\s|\()/);
@@ -392,7 +400,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 22", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 23", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -1223,7 +1231,12 @@ class MainActivity : Activity() {
         offers.filter { it.link in exactLinks || it.exact }.forEach { it.kind = Kind.MATCH; it.exact = true }
         detailQueue.clear()
         // En ucuz 6 eşleşmenin sayfasını aç (en çok bunlar önemli)
-        detailQueue.addAll(offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }.take(6))
+        // Ürün sayfası (satıcı + garanti) sadece model kodlu ya da 1.000 TL üstü eşleşmelerde açılır;
+        // kitap, kozmetik, market gibi ürünlerde arama böylece çok kısalır
+        detailQueue.addAll(
+            offers.filter { it.kind == Kind.MATCH && !bookMode && (codesIn(it.title).isNotEmpty() || it.price >= 1000) }
+                .sortedBy { it.price }.take(5)
+        )
         detailIndex = 0
         detailPhase = true
         nextDetail()
@@ -1267,24 +1280,6 @@ class MainActivity : Activity() {
                     detailAttempt++
                     status.text = "${o.site}: ürün sayfası yükleniyor (${detailAttempt}. tekrar)…"
                     web.evaluateJavascript("window.scrollTo(0, ${2000 + detailAttempt * 2000});", null)
-                    handler.postDelayed({ if (my == token) detailExtract() }, 3500)
-                    return@evaluateJavascript
-                }
-                val noWarranty = d.optString("w").isEmpty() && d.optString("wt").isEmpty() && d.optString("wd").isEmpty()
-                if (noWarranty && !bookMode && codesIn(o.title).isNotEmpty() && detailAttempt < 3) {
-                    detailAttempt = 3
-                    status.text = "${o.site}: garanti bilgisi için özellikler açılıyor…"
-                    web.evaluateJavascript("""
-                        (function(){
-                          var re = /^(ürün özellikleri|özellikler|tüm özellikler|teknik özellikler|ürün bilgileri)$/i;
-                          var els = document.querySelectorAll('button, a, li, span, div, h2, h3');
-                          for (var i = 0; i < els.length; i++) {
-                            var tx = (els[i].innerText || '').trim();
-                            if (re.test(tx)) { try { els[i].click(); } catch (e) {} }
-                          }
-                          window.scrollTo(0, document.body.scrollHeight);
-                        })()
-                    """.trimIndent(), null)
                     handler.postDelayed({ if (my == token) detailExtract() }, 3500)
                     return@evaluateJavascript
                 }
@@ -1488,7 +1483,7 @@ class MainActivity : Activity() {
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
-        report.append("FİYAT AVCISI · DENEME 22\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 23\nGiriş: ").append(userInput)
             .append("\nÜrün: ").append(identity?.label ?: "(kimlik yok)")
             .append("\nSitelere sorulan: ").append(query).append("\n\nKİMLİK ADIMI\n").append(resolveLog).append("\n")
         report.append("SİTE DURUMU\n")

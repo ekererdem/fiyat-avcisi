@@ -165,7 +165,7 @@ class MainActivity : Activity() {
           for (var q = 0; q < lines.length; q++) { if (/garanti (tipi|türü|süresi)|garantili/i.test(lines[q])) { wl = ctx(q, 0, 1); break; } }
 
           // Satıcı: birkaç farklı yerleşimi sırayla dene
-          var seller = '', sline = '';
+          var seller = '', sline = '', pageScore = '';
           var by = t.match(/bu ürün\s+([^\n]{2,40}?)\s+tarafından/i);
           if (by && !junk.test(by[1])) seller = by[1];
           var badge = '';
@@ -212,10 +212,25 @@ class MainActivity : Activity() {
               var hm = html.match(/"(?:merchantName|sellerName|storeName|shopName|merchantTitle)"\s*:\s*"([^"\\]{2,40})"/) ||
                        html.match(/"merchant"\s*:\s*\{[^{}]{0,300}?"name"\s*:\s*"([^"\\]{2,40})"/) ||
                        html.match(/"seller"\s*:\s*\{[^{}]{0,300}?"name"\s*:\s*"([^"\\]{2,40})"/);
-              if (hm && !junk.test(hm[1])) { seller = hm[1]; if (!sline || sline.indexOf('TEŞHİS') === 0) sline = 'sayfa verisinden: ' + hm[0].slice(0, 120); }
+              if (hm && !junk.test(hm[1])) {
+                seller = hm[1];
+                if (!sline || sline.indexOf('TEŞHİS') === 0) sline = 'sayfa verisinden: ' + hm[0].slice(0, 120);
+                // Satıcı puanı: aynı veri bloğunda "score"/"rating" alanı
+                var near = html.slice(Math.max(0, hm.index - 300), hm.index + 400);
+                var sm = near.match(/"(?:sellerScore|merchantScore|storeScore|score|rating)"\s*:\s*"?([0-9]{1,2}(?:[.,][0-9])?)"?/);
+                if (sm) pageScore = sm[1].replace('.', ',');
+              }
             } catch (e) {}
           }
-          var sc = (sline.match(/(?:^|[\s|])((?:10|[0-9])[.,]\d)(?=[\s|]|$)/) || [])[1] || '';
+          // Garanti ekranda yoksa sayfa verisinde ara
+          if (!wm) {
+            try {
+              var html2 = document.documentElement.innerHTML;
+              var gw = html2.match(/[Gg]aranti[ _]?[Tt]ipi[^{}]{0,160}?(İthalatçı Garantili|İthalatçı Firma Garantili|Resmi Distribütör Garantili|Distribütör Garantili|Apple Türkiye Garantili|Türkiye Garantili|Üretici Garantili|Uluslararası Garanti)/);
+              if (gw) { wm = [gw[1], gw[1]]; if (!wl) wl = 'sayfa verisinden: ' + gw[0].slice(0, 120); }
+            } catch (e) {}
+          }
+          var sc = pageScore || (sline.match(/(?:^|[\s|])((?:10|[0-9])[.,]\d)(?=[\s|]|$)/) || [])[1] || '';
           var dbg = [];
           for (var j = 0; j < lines.length && dbg.length < 3; j++) {
             if (/mağazaya git|satıcı puanı|mağaza puanı|satıcıya sor|gönderici/i.test(lines[j])) dbg.push(ctx(j, 3, 1));
@@ -393,7 +408,7 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        root.addView(label("Fiyat Avcısı · Deneme 28", 18f, gold, true).apply {
+        root.addView(label("Fiyat Avcısı · Deneme 29", 18f, gold, true).apply {
             setBackgroundColor(ink)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         })
@@ -533,12 +548,17 @@ class MainActivity : Activity() {
         val my = ++slot.gen
         slot.httpStatus = 0
         slot.loadError = ""
+        val prevUrl = v.url
         v.loadUrl(url)
         val t0 = android.os.SystemClock.elapsedRealtime()
         var n = 0
         lateinit var tick: () -> Unit
         tick = {
-            if (slot.gen == my) {
+            if (slot.gen == my && prevUrl != null && v.url == prevUrl && prevUrl != url &&
+                android.os.SystemClock.elapsedRealtime() - t0 < maxMs) {
+                // Hâlâ önceki aramanın sayfası duruyor: okumadan bekle
+                handler.postDelayed({ tick() }, 400)
+            } else if (slot.gen == my) {
                 n++
                 if (scroll) v.evaluateJavascript("window.scrollBy(0, 1600);", null)
                 v.evaluateJavascript(js) { raw ->
@@ -1149,6 +1169,8 @@ class MainActivity : Activity() {
     }
 
     private fun genderOf(t: String) = when {
+        Regex("(?<![\\p{L}])(kadın|women|woman|bayan)(?![\\p{L}])").containsMatchIn(t) &&
+            Regex("(?<![\\p{L}])(erkek|men|man)(?![\\p{L}])").containsMatchIn(t) -> "Erkek & Kadın"
         Regex("(?<![\\p{L}])(kadın|women|woman|bayan)(?![\\p{L}])").containsMatchIn(t) -> "Kadın"
         Regex("(?<![\\p{L}])(erkek|men|man)(?![\\p{L}])").containsMatchIn(t) -> "Erkek"
         else -> ""
@@ -1492,7 +1514,8 @@ class MainActivity : Activity() {
     private fun isSet(o: Offer): Boolean {
         val t = o.title.lowercase(Locale("tr", "TR"))
         // "Deodorant 150 ml + Stick 45 ml": artının iki yanında ürün var. "1+1" gibi kampanya yazıları set değil.
-        return Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l|adet)\\b[^+]{0,4}\\+\\s*[\\p{L}]").containsMatchIn(t)
+        return Regex("[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l|adet)\\b[^+]{0,4}\\+\\s*[\\p{L}]").containsMatchIn(t) ||
+            genderOf(t) == "Erkek & Kadın"
     }
 
     private fun markUnitPrices(matches: List<Offer>) {
@@ -1576,7 +1599,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 28\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 29\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

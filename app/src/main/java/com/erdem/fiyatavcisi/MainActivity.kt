@@ -480,6 +480,14 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = ink
         setContentView(buildUi())
+        Alarms.ensureChannel(this)
+        Alarms.schedule(this, Alarms.load(this).isNotEmpty())
+        handleShare(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
     }
 
     // ---------- Arayüz ----------
@@ -600,7 +608,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.38", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.39", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -758,8 +766,10 @@ class MainActivity : Activity() {
             menu.add(0, 1, 0, if (resultsScroll.visibility == View.VISIBLE) "Tarayıcıyı göster" else "Sonuçları göster")
             menu.add(0, 2, 1, "Raporu kopyala")
             menu.add(0, 3, 2, "Raporu paylaş")
+            menu.add(0, 4, 0, "🔔 Alarmlarım")
             setOnMenuItemClickListener {
                 when (it.itemId) {
+                    4 -> showAlarms()
                     1 -> toggleBrowser()
                     2 -> copyReport()
                     3 -> shareReport()
@@ -788,6 +798,24 @@ class MainActivity : Activity() {
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(8) })
+
+        // Alarmlar kartı
+        val alarmCount = Alarms.load(this).size
+        results.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(amberBg, 16)
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            addView(label("🔔", 20f, ink))
+            addView(label(if (alarmCount > 0) "Alarmlarım · $alarmCount ürün takipte" else
+                "Fiyat alarmı: bir ilandaki 🔔 düğmesine dokun", 14f, ink, true).apply {
+                setPadding(dp(12), 0, 0, 0)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (alarmCount > 0) addView(label("▸", 16f, muted, true))
+            setOnClickListener { showAlarms() }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
 
         val recent = recentSearches()
         results.addView(label(if (recent.isNotEmpty()) "Son aramalar" else "Örnek aramalar", 14f, ink, true)
@@ -2395,7 +2423,12 @@ class MainActivity : Activity() {
         }
         card.addView(photo(o, 92), LinearLayout.LayoutParams(dp(92), dp(92)).apply { marginEnd = dp(14) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(label("EN UCUZ", 11f, gold, true))
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(label("EN UCUZ", 11f, gold, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(bell(o))
+        })
         col.addView(label(money(o.price), 28f, ink, true))
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2541,6 +2574,7 @@ class MainActivity : Activity() {
         top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         if (o.rating.isNotEmpty()) top.addView(label(
             "★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "", 12f, muted))
+        top.addView(bell(o))
         col.addView(top)
 
         col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 14f, ink).apply {
@@ -2597,12 +2631,213 @@ class MainActivity : Activity() {
         else -> "farklı ürün"
     }
 
+    // ---------- Fiyat alarmı ----------
+
+    /** İlan kartındaki zil: dokununca alarm kurma penceresi */
+    private fun bell(o: Offer): TextView {
+        val on = Alarms.load(this).any { it.link.substringBefore('?') == o.link.substringBefore('?') }
+        return label(if (on) "🔔" else "🔕", 16f, ink).apply {
+            alpha = if (on) 1f else 0.55f
+            setPadding(dp(10), dp(2), dp(2), dp(2))
+            setOnClickListener { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true) }
+        }
+    }
+
+    private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), dp(0))
+        }
+        box.addView(label(title.take(120), 14f, ink))
+        box.addView(label(
+            (if (price != null) "Şu an: ${money(price)} · $site" else "Şu an fiyat okunamadı · $site") +
+                if (available == false) " · stokta yok" else "",
+            13f, muted, true
+        ).apply { setPadding(0, dp(6), 0, dp(10)) })
+        val target = EditText(this).apply {
+            hint = "Hedef fiyat (boş: her düşüşte haber ver)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+        }
+        box.addView(target)
+        val stock = android.widget.CheckBox(this).apply {
+            text = "Stoğa girince de haber ver"
+            isChecked = available == false
+        }
+        box.addView(stock)
+        box.addView(label("Fiyatlar ${Alarms.INTERVAL_MS / 3_600_000} saatte bir kontrol edilir.", 12f, muted)
+            .apply { setPadding(0, dp(6), 0, 0) })
+        val existing = Alarms.load(this).firstOrNull { it.link.substringBefore('?') == link.substringBefore('?') }
+        AlertDialog.Builder(this)
+            .setTitle(if (existing != null) "Alarm kurulu — güncelle" else "Fiyat alarmı kur")
+            .setView(box)
+            .setPositiveButton("Kur") { _, _ ->
+                val t = target.text.toString().replace(",", ".").toDoubleOrNull() ?: 0.0
+                val p = price ?: 0.0
+                Alarms.add(this, Alarm(
+                    id = existing?.id ?: System.currentTimeMillis(), title = title, site = site, link = link, image = image,
+                    startPrice = existing?.startPrice ?: p, lastPrice = p, lowest = if (p > 0) p else 0.0, target = t,
+                    wantStock = stock.isChecked, inStock = available, lastCheck = 0L, status = "henüz kontrol edilmedi",
+                ))
+                askNotificationPermission()
+                Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
+            }
+            .apply { if (existing != null) setNeutralButton("Alarmı sil") { _, _ -> Alarms.remove(this@MainActivity, existing.id); if (offers.isNotEmpty() && !running) render(final = finished) } }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun askNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
+    }
+
+    /** Alarmlarım ekranı */
+    private fun showAlarms() {
+        if (running) return
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        progress.visibility = View.GONE
+        status.visibility = View.VISIBLE
+        status.text = "Alarmlar ${Alarms.INTERVAL_MS / 3_600_000} saatte bir arka planda kontrol edilir"
+        results.removeAllViews()
+        val list = Alarms.load(this)
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+        }
+        head.addView(label("Alarmlarım (${list.size})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label("Ana sayfa", 13f, muted, true).apply {
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setOnClickListener { status.visibility = View.GONE; showHome() }
+        })
+        if (list.isNotEmpty()) head.addView(label("Şimdi kontrol et", 13f, ink, true).apply {
+            background = rounded(gold, 12)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener {
+                status.text = "Kontrol ediliyor…"
+                progress.visibility = View.VISIBLE
+                Thread {
+                    val n = try { Alarms.checkAll(applicationContext) } catch (e: Exception) { 0 }
+                    handler.post {
+                        progress.visibility = View.GONE
+                        Toast.makeText(this@MainActivity, if (n > 0) "$n bildirim gönderildi" else "Değişiklik yok", Toast.LENGTH_SHORT).show()
+                        showAlarms()
+                    }
+                }.start()
+            }
+        })
+        results.addView(head)
+        if (list.isEmpty()) {
+            noticeCard("Henüz alarm yok. Arama sonuçlarında bir ilanın 🔕 düğmesine dokun ya da Trendyol, Hepsiburada gibi " +
+                "uygulamalarda bir ürünü Paylaş → Fiyat Avcısı ile gönder.", ink, amberBg)
+            return
+        }
+        val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
+        for (a in list) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = rounded(Color.WHITE, 14, line)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+            }
+            val iv = ImageView(this).apply {
+                background = rounded(Color.WHITE, 12, line)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+            }
+            card.addView(iv, LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(12) })
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(pill(a.site, Color.WHITE, siteColors[a.site] ?: ink, bold = true))
+                addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                addView(label("Sil", 13f, red, true).apply {
+                    setPadding(dp(10), dp(2), dp(2), dp(2))
+                    setOnClickListener { Alarms.remove(this@MainActivity, a.id); showAlarms() }
+                })
+            })
+            col.addView(label(a.title, 14f, ink).apply {
+                maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, dp(4))
+            })
+            val now = if (a.lastPrice > 0) money(a.lastPrice) else "?"
+            col.addView(label(now, 18f, if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
+            val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(6), 0, 0) }
+            if (a.startPrice > 0) chips.addView(pill("başta ${money(a.startPrice)}", ink, greyBg))
+            if (a.lowest > 0 && a.lowest < a.startPrice) chips.addView(pill("en düşük ${money(a.lowest)}", green, greenBg))
+            chips.addView(pill(if (a.target > 0) "hedef ${money(a.target)}" else "her düşüşte", ink, amberBg))
+            if (a.wantStock) chips.addView(pill(when (a.inStock) { false -> "stok bekleniyor"; true -> "stokta"; else -> "stok takibi" },
+                if (a.inStock == false) orange else green, if (a.inStock == false) orangeBg else greenBg))
+            col.addView(chips)
+            col.addView(label(
+                (if (a.lastCheck > 0) "Son kontrol ${df.format(java.util.Date(a.lastCheck))} · " else "") + a.status,
+                11f, muted
+            ).apply { setPadding(0, dp(6), 0, 0) })
+            card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            results.addView(card, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+        }
+        noticeCard("Xiaomi telefonlarda arka plan kontrolünün çalışması için: Ayarlar → Uygulamalar → Fiyat Avcısı → " +
+            "Pil tasarrufu → Kısıtlama yok.", muted, greyBg)
+    }
+
+    /** Başka uygulamadan "Paylaş" ile gelen ürün linki: karşılaştır ya da alarm kur */
+    private fun handleShare(i: Intent?) {
+        if (i?.action != Intent.ACTION_SEND) return
+        val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+        i.action = null
+        val url = Regex("https?://\\S+").find(text)?.value?.trimEnd('.', ',', ')') ?: run {
+            // Link yoksa paylaşılan yazıyı arama olarak kullan
+            if (text.isNotBlank()) { input.setText(text.take(80)); startTest() }
+            return
+        }
+        status.visibility = View.VISIBLE
+        status.text = "Paylaşılan ürün okunuyor…"
+        progress.visibility = View.VISIBLE
+        Thread {
+            val info = try { Alarms.fetch(url) } catch (e: Exception) { null }
+            handler.post {
+                progress.visibility = View.GONE
+                status.text = ""
+                val finalUrl = info?.finalUrl ?: url
+                val host = Uri.parse(finalUrl).host.orEmpty()
+                val site = sites.firstOrNull { host.contains(it.name.lowercase(Locale.ROOT)) }?.name
+                    ?: host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
+                // Ürün adı: sayfa başlığı (site adı ve "Fiyatı" gibi ekler atılır); yoksa paylaşılan yazı
+                val rawTitle = info?.title?.takeIf { it.isNotBlank() } ?: text.replace(url, "").trim()
+                val name = rawTitle.split(Regex("\\s[-|–]\\s")).first()
+                    .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al|ve)\\b"), " ")
+                    .replace(Regex("\\s+"), " ").trim()
+                val searchName = name.split(" ").take(8).joinToString(" ")
+                AlertDialog.Builder(this)
+                    .setTitle(name.take(90).ifEmpty { "Paylaşılan ürün" })
+                    .setMessage((info?.price?.let { "Şu an ${money(it)} · $site" } ?: "Fiyat okunamadı · $site") +
+                        (if (info?.inStock == false) " · stokta yok" else ""))
+                    .setPositiveButton("Fiyatları karşılaştır") { _, _ ->
+                        if (searchName.isNotBlank()) { input.setText(searchName); startTest() }
+                    }
+                    .setNeutralButton("Alarm kur") { _, _ ->
+                        alarmDialog(name.ifEmpty { finalUrl }, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock)
+                    }
+                    .setNegativeButton("Vazgeç", null)
+                    .show()
+            }
+        }.start()
+    }
+
     // ---------- Rapor ----------
 
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 38\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 39\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

@@ -566,7 +566,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.34", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.35", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -895,6 +895,22 @@ class MainActivity : Activity() {
                 !simpleUsed && !isBarcodeQ && (d?.optBoolean("noResults") == true || isIrrelevant(d, q)) &&
                     simplifiedQuery(q).let { it.isNotEmpty() && norm(it) != norm(q) } ->
                     runSite(v, site, simplifiedQuery(q), true, reloaded, onDone)
+                // Çok az sonuç geldiyse (site tam ifadeyi arıyor olabilir): sade aramayı da yap, sonuçları birleştir
+                !simpleUsed && !isBarcodeQ && d != null && cards in 1..4 &&
+                    simplifiedQuery(q).let { it.isNotEmpty() && norm(it) != norm(q) } ->
+                    runSite(v, site, simplifiedQuery(q), true, reloaded) { d2, _ ->
+                        val merged = org.json.JSONArray()
+                        val seenLinks = HashSet<String>()
+                        listOfNotNull(d.optJSONArray("cards"), d2?.optJSONArray("cards")).forEach { arr ->
+                            for (i in 0 until arr.length()) {
+                                val c = arr.getJSONObject(i)
+                                if (seenLinks.add(c.optString("link").substringBefore('?'))) merged.put(c)
+                            }
+                        }
+                        d.put("extra", merged.length() - cards)
+                        d.put("cards", merged)
+                        onDone(d, false)
+                    }
                 else -> onDone(d, simpleUsed)
             }
         }
@@ -1105,7 +1121,8 @@ class MainActivity : Activity() {
                     "\n    Sayfa metni: ${d.optString("pageSample").ifEmpty { "(boş)" }}"
             }
             else -> "$count ürün okundu" + (if (d.optBoolean("fallback")) " (yedek yöntemle)" else "") +
-                (if (simpleUsed) " (sade aramayla: \"${simplifiedQuery(q)}\")" else "")
+                (if (simpleUsed) " (sade aramayla: \"${simplifiedQuery(q)}\")" else "") +
+                (if (d.optInt("extra") > 0) " (+${d.optInt("extra")} sade aramadan: \"${simplifiedQuery(q)}\")" else "")
         }
         siteSummary.add("$name: $verdict")
     }
@@ -2424,7 +2441,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 34\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 35\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

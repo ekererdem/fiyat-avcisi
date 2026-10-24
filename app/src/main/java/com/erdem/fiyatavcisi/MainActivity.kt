@@ -575,7 +575,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.36", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.37", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -773,7 +773,14 @@ class MainActivity : Activity() {
                 flow.addView(pill(q, ink, Color.WHITE, size = 14f).apply {
                     background = rounded(Color.WHITE, 20, line)
                     setPadding(dp(14), dp(8), dp(14), dp(8))
-                    setOnClickListener { input.setText(q); startTest() }
+                    // Dokununca sadece arama kutusuna yazar: düzenleyip Ara'ya basılır
+                    setOnClickListener {
+                        input.setText(q)
+                        input.setSelection(q.length)
+                        input.requestFocus()
+                        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                            .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+                    }
                 })
             }
         results.addView(flow)
@@ -2569,7 +2576,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 36\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 37\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

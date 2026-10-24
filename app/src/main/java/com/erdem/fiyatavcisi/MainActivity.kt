@@ -272,6 +272,15 @@ class MainActivity : Activity() {
     private lateinit var chipsScroll: HorizontalScrollView
     private lateinit var progress: ProgressBar
     private val expanded = HashMap<String, Boolean>()
+    private lateinit var filterBar: LinearLayout
+    private lateinit var filterInput: EditText
+    private lateinit var sortBtn: TextView
+    private lateinit var siteToggles: LinearLayout
+    private var filterText = ""
+    private var sortMode = 0
+    private val hiddenSites = HashSet<String>()
+    private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Birim fiyat", "Puan", "Değerlendirme sayısı")
+    private val refilter = Runnable { if (offers.isNotEmpty()) render(final = finished) }
 
     private val handler = Handler(Looper.getMainLooper())
     private val report = StringBuilder()
@@ -566,7 +575,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.35", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.36", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -631,6 +640,65 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         root.addView(status)
+
+        // Sonuç filtresi: kelimeyle ara, sırala, site gizle (sonuç listesinin üstünde sabit durur)
+        filterBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(0), dp(12), dp(6))
+            visibility = View.GONE
+        }
+        val fRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        filterInput = EditText(this).apply {
+            hint = "Sonuçlarda ara (ör. siyah, 6'lı)"
+            setSingleLine()
+            textSize = 14f
+            setTextColor(ink)
+            setHintTextColor(Color.parseColor("#A8A29E"))
+            background = rounded(Color.WHITE, 12, line)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(e: android.text.Editable?) {
+                    filterText = e?.toString().orEmpty()
+                    handler.removeCallbacks(refilter)
+                    handler.postDelayed(refilter, 250)
+                }
+            })
+        }
+        fRow.addView(filterInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        sortBtn = label("Sırala ▾", 14f, ink, true).apply {
+            background = rounded(Color.WHITE, 12, line)
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+        }
+        sortBtn.setOnClickListener {
+            PopupMenu(this, sortBtn).apply {
+                sortNames.forEachIndexed { i, n -> menu.add(0, i, i, (if (i == sortMode) "✓ " else "") + n) }
+                setOnMenuItemClickListener {
+                    sortMode = it.itemId
+                    sortBtn.text = if (sortMode == 0) "Sırala ▾" else "${sortNames[sortMode]} ▾"
+                    render(final = finished)
+                    true
+                }
+                show()
+            }
+        }
+        fRow.addView(sortBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = dp(8) })
+        filterBar.addView(fRow)
+        siteToggles = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, 0)
+        }
+        filterBar.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(siteToggles)
+        })
+        root.addView(filterBar)
 
         // Tarayıcı arkada tam boyutta durur, sonuç listesi üstünü kapatır
         val stack = FrameLayout(this)
@@ -983,6 +1051,10 @@ class MainActivity : Activity() {
         resolvedAt = 0L
         results.removeAllViews()
         expanded.clear()
+        hiddenSites.clear()
+        filterText = ""
+        filterInput.setText("")
+        filterBar.visibility = View.GONE
         rememberSearch(userInput)
         siteSummary.clear()
         progress.visibility = View.VISIBLE
@@ -2158,62 +2230,75 @@ class MainActivity : Activity() {
             status.text = "Taranıyor · şimdilik en ucuz ${money(matches.first().price)} (${matches.first().site}) · $took"
         }
 
+        // Filtre (site, kelime) sadece gösterimi etkiler; rapor ve hesaplar bütün ilanlarla yapılır
+        filterBar.visibility = if (offers.isNotEmpty()) View.VISIBLE else View.GONE
+        updateSiteToggles()
+        val fm = matches.filter { shown(it) }
+        val fo = others.filter { shown(it) }
+        if (fm.size < matches.size || fo.size < others.size) {
+            results.addView(label("Filtre: ${fm.size + fo.size}/${matches.size + others.size} ilan gösteriliyor", 12f, gold, true)
+                .apply { setPadding(dp(6), dp(2), dp(6), dp(4)) })
+        }
+
         // En ucuz teklif kutusu
-        if (matches.isNotEmpty()) heroCard(matches)
+        if (fm.isNotEmpty()) heroCard(fm)
         if (familyTried && matches.isEmpty()) {
             noticeCard("Bu model sitelerde bulunamadı (satıştan kalkmış olabilir). Aşağıda aynı serinin başka yılları ve modelleri var.",
                 orange, orangeBg)
         }
         // Aranan miktarda ilan yoksa: aynı ürünün birim fiyatı en ucuz paketi
-        bestOtherPackage(matches, others)?.let { b ->
+        bestOtherPackage(fm, fo)?.let { b ->
             noticeCard("Aranan miktarda ilan yok. Birim fiyatı en ucuz paket:", green, greenBg)
             offerRow(b, true)
         }
         // Aynı model farklı paketlerle satılıyorsa uyar
-        val variants = matches.map { it.variant }.filter { it.isNotEmpty() && it != "Kadın" && it != "Erkek" && it != "Unisex" }.distinct()
+        val variants = fm.map { it.variant }.filter { it.isNotEmpty() && it != "Kadın" && it != "Erkek" && it != "Unisex" }.distinct()
         if (variants.size > 1) {
             noticeCard("Farklı paketler var (${variants.joinToString(", ")}). İçerik ya da garanti farklı olabilir.", orange, orangeBg)
         }
 
-        if (matches.isNotEmpty()) section("match", "Aynı ürün · ucuzdan pahalıya", matches.size, green, true) {
-            matches.forEachIndexed { i, o -> offerRow(o, i == 0) }
+        val cheapest = fm.firstOrNull()
+        if (fm.isNotEmpty()) section("match", "Aynı ürün · " + (if (sortMode == 0) "ucuzdan pahalıya" else sortNames[sortMode].lowercase(Locale("tr", "TR"))),
+            fm.size, green, true) {
+            applySort(fm).forEach { o -> offerRow(o, o === cheapest) }
         }
         // Eşleşen ürün varsa muadil ancak birim fiyatı ondan ucuzsa anlamlıdır (pahalı taklitler gösterilmez)
         val bestMatchUnit = matches.filter { !isSet(it) }.mapNotNull { unitPrice(it)?.first }.minOrNull()
-        val muadils = collapse(others.filter { it.kind == Kind.MUADIL })
+        val muadils = collapse(fo.filter { it.kind == Kind.MUADIL })
             .filter { m -> bestMatchUnit == null || (unitPrice(m)?.first ?: Double.MAX_VALUE) < bestMatchUnit }
             .sortedBy { unitPrice(it)?.first ?: Double.MAX_VALUE }
         if (muadils.isNotEmpty()) section("muadil", "Daha ucuz muadiller", muadils.size, green, true) {
-            muadils.forEach { offerRow(it, false) }
+            applySort(muadils).forEach { offerRow(it, false) }
         }
-        val otherPackages = sortedByUnit(others.filter { it.kind == Kind.OTHER_PACKAGE })
+        val otherPackages = sortedByUnit(fo.filter { it.kind == Kind.OTHER_PACKAGE })
         if (otherPackages.isNotEmpty()) section("pack", "Diğer paketler · birim fiyata göre", otherPackages.size, ink, matches.isEmpty()) {
-            otherPackages.forEach { offerRow(it, false) }
+            applySort(otherPackages).forEach { offerRow(it, false) }
         }
-        val possibles = others.filter { it.kind == Kind.POSSIBLE }
+        val possibles = fo.filter { it.kind == Kind.POSSIBLE }
         if (possibles.isNotEmpty()) section("possible", "Olası eşleşmeler · kontrol et", possibles.size, orange, matches.isEmpty()) {
-            possibles.forEach { offerRow(it, false) }
+            applySort(possibles).forEach { offerRow(it, false) }
         }
-        val suspicious = others.filter { it.kind == Kind.SUSPICIOUS }
+        val suspicious = fo.filter { it.kind == Kind.SUSPICIOUS }
         if (suspicious.isNotEmpty()) section("suspicious", "Şüpheli ucuz ilanlar", suspicious.size, red, false) {
-            suspicious.forEach { offerRow(it, false) }
+            applySort(suspicious).forEach { offerRow(it, false) }
         }
-        val used = others.filter { it.kind == Kind.USED }
+        val used = fo.filter { it.kind == Kind.USED }
         if (used.isNotEmpty()) section("used", "Yenilenmiş / ikinci el / teşhir", used.size, ink, false) {
-            used.forEach { offerRow(it, false) }
+            applySort(used).forEach { offerRow(it, false) }
         }
-        val diffModels = others.filter { it.kind == Kind.DIFFERENT_MODEL }
+        val diffModels = fo.filter { it.kind == Kind.DIFFERENT_MODEL }
         if (diffModels.isNotEmpty()) section("diff", "Farklı model / seri", diffModels.size, ink, familyTried && matches.isEmpty()) {
-            diffModels.forEach { offerRow(it, false) }
+            applySort(diffModels).forEach { offerRow(it, false) }
         }
-        val rest = others.filter {
+        val rest = fo.filter {
             it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS &&
                 it.kind != Kind.OTHER_PACKAGE && it.kind != Kind.MUADIL && it.kind != Kind.USED
         }
-        // Hiçbir şey eşleşmediyse en azından bu liste açık gelsin
-        val nothingElse = matches.isEmpty() && possibles.isEmpty() && otherPackages.isEmpty() && diffModels.isEmpty() && muadils.isEmpty()
-        if (rest.isNotEmpty()) section("rest", "Aksesuar / farklı ürün", collapse(rest).size, muted, nothingElse) {
-            collapse(rest).sortedBy { it.price }.forEach { offerRow(it, false) }
+        // Hiçbir şey eşleşmediyse en azından bu liste açık gelsin (filtreyle aranıyorsa da)
+        val nothingElse = fm.isEmpty() && possibles.isEmpty() && otherPackages.isEmpty() && diffModels.isEmpty() && muadils.isEmpty()
+        if (rest.isNotEmpty()) section("rest", "Aksesuar / farklı ürün", collapse(rest).size, muted,
+            nothingElse || filterText.isNotBlank()) {
+            applySort(collapse(rest).sortedBy { it.price }).forEach { offerRow(it, false) }
         }
         if (siteSummary.isNotEmpty()) section("sites", "Site ayrıntıları", siteSummary.size, muted, false) {
             siteSummary.forEach { results.addView(label("• $it", 12f, muted).apply { setPadding(dp(6), dp(3), dp(6), dp(3)) }) }
@@ -2221,6 +2306,49 @@ class MainActivity : Activity() {
 
         buildReport(matches, others)
         resultsScroll.post { resultsScroll.scrollTo(0, y) }
+    }
+
+    /** Filtreye uyuyor mu: site gizli değil ve yazılan kelimelerin hepsi adda/satıcıda geçiyor */
+    private fun shown(o: Offer): Boolean {
+        if (o.site in hiddenSites) return false
+        val words = filterText.trim().split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
+        if (words.isEmpty()) return true
+        val nt = canonNorm(o.title + " " + o.seller + " " + o.site)
+        return words.all { nt.contains(it) }
+    }
+
+    private fun ratingNum(o: Offer) = o.rating.replace(',', '.').toDoubleOrNull() ?: 0.0
+
+    /** Seçilen sıralama; "Önerilen" bölümün kendi sırasını korur */
+    private fun applySort(list: List<Offer>): List<Offer> = when (sortMode) {
+        1 -> list.sortedBy { it.price }
+        2 -> list.sortedByDescending { it.price }
+        3 -> list.sortedWith(compareBy<Offer> { unitPrice(it)?.first ?: Double.MAX_VALUE }.thenBy { it.price })
+        4 -> list.sortedWith(compareByDescending<Offer> { ratingNum(it) }.thenByDescending { countNum(it.ratingCount) })
+        5 -> list.sortedWith(compareByDescending<Offer> { countNum(it.ratingCount) }.thenByDescending { ratingNum(it) })
+        else -> list
+    }
+
+    /** Site çipleri: dokununca o sitenin ilanları gizlenir/gösterilir */
+    private fun updateSiteToggles() {
+        siteToggles.removeAllViews()
+        for (s in sites) {
+            val n = offers.count { it.site == s.name }
+            if (n == 0) continue
+            val hidden = s.name in hiddenSites
+            val p = pill("${s.name} $n", if (hidden) muted else Color.WHITE,
+                if (hidden) greyBg else (siteColors[s.name] ?: ink), bold = true, size = 12f).apply {
+                setPadding(dp(10), dp(5), dp(10), dp(5))
+                if (hidden) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                setOnClickListener {
+                    if (hidden) hiddenSites.remove(s.name) else hiddenSites.add(s.name)
+                    render(final = finished)
+                }
+            }
+            siteToggles.addView(p, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(6) })
+        }
     }
 
     /** En üstte büyük kutu: en ucuz aynı ürün */
@@ -2441,7 +2569,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 35\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 36\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

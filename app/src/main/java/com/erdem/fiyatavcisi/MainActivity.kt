@@ -320,17 +320,38 @@ class MainActivity : Activity() {
           }
           // Kartın ürün fotoğrafı (tembel yüklenen sitelerde data-src)
           function imgOf(box){
+            // Kartın en büyük resmi ürün fotoğrafıdır; "Avantajlı", kampanya rozetleri ve logolar küçüktür
+            var best = '', bestW = -1;
+            var bad = /sprite|logo|icon|badge|rozet|etiket|label|sticker|campaign|kampanya|avantaj|placeholder|blank|\.svg|\.gif/i;
+            function pick(u, w){
+              u = (u || '').trim().split(' ')[0];
+              if (u.indexOf('//') === 0) u = 'https:' + u;
+              if (!/^https?:/.test(u) || bad.test(u)) return;
+              if (w > bestW) { bestW = w; best = u; }
+            }
             var ims = box.querySelectorAll('img');
             for (var q = 0; q < ims.length; q++) {
               var im = ims[q];
-              var cands = [im.currentSrc, im.src, im.getAttribute('data-src'), im.getAttribute('data-original'),
-                (im.getAttribute('srcset') || '').split(' ')[0]];
-              for (var z = 0; z < cands.length; z++) {
-                var u = cands[z] || '';
-                if (/^https?:/.test(u) && !/sprite|logo|icon|badge|placeholder|\.svg/i.test(u)) return u;
+              var w = im.naturalWidth || im.width || parseInt(im.getAttribute('width') || '0', 10) || 0;
+              if (w > 0 && w < 50) continue;
+              var alt = (im.getAttribute('alt') || '').toLowerCase();
+              if (/avantaj|kampanya|rozet|badge|kargo|logo/.test(alt)) continue;
+              [im.currentSrc, im.src, im.getAttribute('data-src'), im.getAttribute('data-original'), im.getAttribute('data-lazy'),
+               im.getAttribute('data-image'), im.getAttribute('srcset'), im.getAttribute('data-srcset')]
+                .forEach(function(u){ pick(u, w || 100); });
+            }
+            // <picture><source srcset=...> ile verilen resimler
+            var srcs = box.querySelectorAll('source[srcset], source[data-srcset]');
+            for (var r = 0; r < srcs.length; r++) pick(srcs[r].getAttribute('srcset') || srcs[r].getAttribute('data-srcset'), 90);
+            // Arka plan resmi olarak verilenler
+            if (!best) {
+              var bgs = box.querySelectorAll('[style*="background-image"]');
+              for (var b = 0; b < bgs.length; b++) {
+                var m = /url\(["']?([^"')]+)["']?\)/.exec(bgs[b].getAttribute('style') || '');
+                if (m) pick(m[1], 80);
               }
             }
-            return '';
+            return best;
           }
           function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
 
@@ -537,7 +558,7 @@ class MainActivity : Activity() {
     private val imgCache = LruCache<String, Bitmap>(120)
     private val imgPool = java.util.concurrent.Executors.newFixedThreadPool(4)
 
-    private fun loadImage(url: String, iv: ImageView) {
+    private fun loadImage(url: String, iv: ImageView, referer: String = "") {
         iv.tag = url
         imgCache.get(url)?.let { iv.setImageBitmap(it); return }
         imgPool.execute {
@@ -546,6 +567,10 @@ class MainActivity : Activity() {
                 c.connectTimeout = 5000
                 c.readTimeout = 7000
                 c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36")
+                c.setRequestProperty("Accept", "image/webp,image/avif,image/*,*/*")
+                // Bazı siteler resmi sadece kendi sayfasından gelen isteğe verir
+                if (referer.isNotEmpty()) c.setRequestProperty("Referer", referer)
+                c.instanceFollowRedirects = true
                 val bytes = c.inputStream.use { it.readBytes() }
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -575,7 +600,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.37", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.38", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -2432,7 +2457,8 @@ class MainActivity : Activity() {
         background = rounded(Color.WHITE, 12, line)
         setPadding(dp(4), dp(4), dp(4), dp(4))
         scaleType = ImageView.ScaleType.FIT_CENTER
-        if (o.image.isNotEmpty()) loadImage(o.image, this)
+        if (o.image.isNotEmpty()) loadImage(o.image, this,
+            Uri.parse(o.link).let { u -> "${u.scheme}://${u.host}/" })
         minimumWidth = dp(size)
         minimumHeight = dp(size)
     }
@@ -2576,7 +2602,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 37\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 38\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

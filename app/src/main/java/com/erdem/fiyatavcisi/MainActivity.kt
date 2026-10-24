@@ -566,7 +566,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.33", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.34", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -875,7 +875,8 @@ class MainActivity : Activity() {
             val c = acc.size
             if (c > 0 && c == last) stable++ else stable = 0
             last = c
-            d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= 3) ||
+            // Az kart görünüyorsa sayfa hâlâ yükleniyor olabilir: biraz daha beklenir
+            d?.optBoolean("noResults") == true || (c > 0 && stable >= 2 && n >= (if (c < 6) 6 else 3)) ||
                 // Ürünler gelmiş ama hiçbiri aramayla ilgili değilse beklemeye gerek yok
                 // (Önce üstteki öneri/sponsorlu kartlar gelebilir: sayfa oturmadan "ilgisiz" denmez)
                 (c > 0 && n >= 5 && stable >= 2 && !isBarcodeSearch && isIrrelevant(d, q)) ||
@@ -1179,7 +1180,9 @@ class MainActivity : Activity() {
         codesIn(title).any { sameCode(it.first, code) || sameCode(it.second, code) } || norm(title).contains(code.replace("/", ""))
 
     private val unitWords = setOf("adet", "li", "lı", "lu", "lü", "kg", "gr", "g", "ml", "lt", "l", "litre", "cl", "mm", "cm",
-        "paket", "kutu", "rulo", "yaprak", "parça", "gram")
+        "paket", "kutu", "rulo", "yaprak", "parça", "gram", "set", "takım")
+    // Karşılaştırma sadeleştirilmiş kelimelerle yapılır ("parça" -> "parca")
+    private val unitNorm by lazy { unitWords.map { norm(it) }.toSet() }
 
     // Arama kelimesi olarak şart sayılmayan kelimeler: renk, cinsiyet, konsantrasyon, genel tür adı
     private val colorWords = setOf("beyaz", "siyah", "kirmizi", "mavi", "lacivert", "gri", "yesil", "sari", "pembe", "mor",
@@ -1287,7 +1290,7 @@ class MainActivity : Activity() {
             return null
         }
         fun count(): Amount? {
-            val m = Regex("([0-9]{1,3}(?:\\.[0-9]{3})+|[0-9]+)\\s*(?:adet|['’]?\\s?l[iıuü]\\b)").find(t) ?: return null
+            val m = Regex("([0-9]{1,3}(?:\\.[0-9]{3})+|[0-9]+)\\s*(?:adet|parça|parca|prç|pcs|['’]?\\s?l[iıuü]\\b)").find(t) ?: return null
             val n = numberOf(m.groupValues[1])
             if (n <= 1) return null
             return Amount(n, "adet", packMultiplier(t, m.range.first, m.range.last, countUnit = true))
@@ -1310,16 +1313,16 @@ class MainActivity : Activity() {
         val tokens = canonText(q).split(Regex("[\\s:]+")).map { norm(it) }.filter { it.isNotEmpty() }
         val words = mutableListOf<String>()
         val hard = mutableListOf<String>()
-        val qty = Regex("^[0-9]+(li|lu|adet|kg|gr|g|ml|lt|l|cl|gram)$")
+        val qty = Regex("^[0-9]+(li|lu|adet|kg|gr|g|ml|lt|l|cl|gram|parca)$")
         val sizeWords = setOf("no", "numara", "beden")
         tokens.forEachIndexed { i, t ->
             val next = tokens.getOrNull(i + 1)
             val prev = tokens.getOrNull(i - 1)
             val isNum = t.all { it.isDigit() }
             when {
-                t in unitWords || qty.matches(t) -> {}
+                t in unitNorm || qty.matches(t) -> {}
                 t in colorWords || t in softWords -> {}
-                isNum && next != null && next in unitWords -> {}
+                isNum && next != null && next in unitNorm -> {}
                 isNum && ((prev != null && prev in sizeWords) || (next != null && next in sizeWords)) -> hard.add("no$t")
                 isNum && prev != null -> hard.add(prev + t)
                 t.length >= 3 -> words.add(if (t.length > 5) t.removeSuffix("lar").removeSuffix("ler") else t)
@@ -1349,12 +1352,12 @@ class MainActivity : Activity() {
     /** Sade arama: miktar ve renk atılır ("prima 4 numara 80 adet" -> "prima 4 numara"); olmazsa ürün türü + ölçü */
     private fun simplifiedQuery(q: String): String {
         val toks = q.split(Regex("\\s+")).filter { it.isNotBlank() }
-        val qty = Regex("^[0-9]+(li|lu|adet|kg|gr|g|ml|lt|l|cl|gram)$")
+        val qty = Regex("^[0-9]+(li|lu|adet|kg|gr|g|ml|lt|l|cl|gram|parca)$")
         val keep = toks.filterIndexed { i, w ->
             val n = norm(w)
             val next = toks.getOrNull(i + 1)?.let { norm(it) }
-            n.isNotEmpty() && n !in unitWords && !qty.matches(n) && n !in colorWords &&
-                !(n.all { it.isDigit() } && next != null && next in unitWords)
+            n.isNotEmpty() && n !in unitNorm && !qty.matches(n) && n !in colorWords &&
+                !(n.all { it.isDigit() } && next != null && next in unitNorm)
         }
         val s1 = keep.joinToString(" ")
         if (keep.size >= 2 && norm(s1) != norm(q)) return s1
@@ -2190,7 +2193,9 @@ class MainActivity : Activity() {
             it.kind != Kind.DIFFERENT_MODEL && it.kind != Kind.POSSIBLE && it.kind != Kind.SUSPICIOUS &&
                 it.kind != Kind.OTHER_PACKAGE && it.kind != Kind.MUADIL && it.kind != Kind.USED
         }
-        if (rest.isNotEmpty()) section("rest", "Aksesuar / farklı ürün", collapse(rest).size, muted, false) {
+        // Hiçbir şey eşleşmediyse en azından bu liste açık gelsin
+        val nothingElse = matches.isEmpty() && possibles.isEmpty() && otherPackages.isEmpty() && diffModels.isEmpty() && muadils.isEmpty()
+        if (rest.isNotEmpty()) section("rest", "Aksesuar / farklı ürün", collapse(rest).size, muted, nothingElse) {
             collapse(rest).sortedBy { it.price }.forEach { offerRow(it, false) }
         }
         if (siteSummary.isNotEmpty()) section("sites", "Site ayrıntıları", siteSummary.size, muted, false) {
@@ -2290,7 +2295,7 @@ class MainActivity : Activity() {
         // "84 Adet Bez & Külot Bez 44 Adet": & ile miktarlı ikinci bir ürün
         if (Regex("&\\s*[\\p{L}][^&]*?[0-9]+\\s*(adet|ml|gr|g|kg)(?![\\p{L}])").containsMatchIn(t)) return true
         // "Setli ürün", "hediyeli" (aranan ürün zaten set değilse)
-        if (!norm(query).contains("set") && Regex("hediye|setli|(?<![\\p{L}])set(i)?(?![\\p{L}])").containsMatchIn(t)) return true
+        if (!norm(query).contains("set") && Regex("hediye|setli").containsMatchIn(t)) return true
         // "200 gr x2 ve Nestle Coffee Mate 500 gr": "ve"den sonra miktarıyla başka bir ürün
         return Regex("(?<![\\p{L}])ve\\s+[\\p{L}]+(?:\\s+[\\p{L}]+){0,3}\\s+[0-9]+(?:[.,][0-9]+)?\\s*(ml|gr|g|kg|lt|l)(?![\\p{L}])").containsMatchIn(t)
     }
@@ -2419,7 +2424,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 33\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 34\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

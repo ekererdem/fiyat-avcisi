@@ -174,10 +174,11 @@ class MainActivity : Activity() {
                 android.content.res.Configuration.UI_MODE_NIGHT_YES
         }
         if (dark) {
-            paper = c("#0F0F0F"); surface = c("#1A1A1A"); greyBg = c("#242424"); ink = c("#F2F2F2"); muted = c("#A3A3A3")
-            hintColor = c("#6E6E6E"); line = c("#2A2A2A"); gold = c("#4CC38A"); accentOn = c("#0F0F0F"); brand = c("#F2C14E")
-            green = c("#4CC38A"); red = c("#F28B82"); orange = c("#F5A962")
-            greenBg = c("#13301F"); redBg = c("#3B1A18"); orangeBg = c("#3A2814"); amberBg = c("#3A3016")
+            // Loş lacivert (eski Twitter "Dim" teması gibi)
+            paper = c("#15202B"); surface = c("#1C2A38"); greyBg = c("#253341"); ink = c("#F2F5F7"); muted = c("#8B98A5")
+            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#4CC38A"); accentOn = c("#15202B"); brand = c("#F2C14E")
+            green = c("#4CC38A"); red = c("#F4908A"); orange = c("#F5A962")
+            greenBg = c("#16352E"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#363423")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
             hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0F6B3A"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
@@ -850,7 +851,7 @@ class MainActivity : Activity() {
         }
         header.addView(label("FA", 15f, brand, true).apply {
             gravity = Gravity.CENTER
-            background = rounded(if (dark) c("#2A2A2A") else c("#111111"), 10)
+            background = rounded(if (dark) c("#253341") else c("#111111"), 10)
         }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) })
         header.addView(label("Fiyat Avcısı", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(iconButton(R.drawable.ic_bell, "Alarmlar") { showAlarms() })

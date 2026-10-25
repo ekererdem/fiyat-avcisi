@@ -359,6 +359,7 @@ class MainActivity : Activity() {
     private lateinit var siteChips: LinearLayout
     private lateinit var gearDot: View
     private var scanSites: Set<String> = emptySet()
+    private var devTaps = 0
     private lateinit var chipsScroll: HorizontalScrollView
     private lateinit var progress: ProgressBar
     private val expanded = HashMap<String, Boolean>()
@@ -671,6 +672,35 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Kapat", null)
             .show()
+    }
+
+    /** Geri tuşu: ayarlar/alarmlar → sonuçlara ya da ana sayfaya; sonuçlar → ana sayfa; ana sayfa → çıkış */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        when {
+            resultsScroll.visibility != View.VISIBLE -> toggleBrowser()
+            running -> { stopAll(); running = false; progress.visibility = View.GONE; showHome() }
+            screen == "settings" || screen == "alarms" -> {
+                if (offers.isNotEmpty()) {
+                    filterBar.visibility = View.VISIBLE
+                    chipsScroll.visibility = View.VISIBLE
+                    status.visibility = View.VISIBLE
+                    render(final = finished)
+                } else showHome()
+            }
+            screen == "results" -> goHome()
+            else -> @Suppress("DEPRECATION") super.onBackPressed()
+        }
+    }
+
+    /** Sonuçları kapatıp ana sayfaya dön */
+    private fun goHome() {
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        status.visibility = View.GONE
+        offers.clear()
+        showHome()
+        resultsScroll.post { resultsScroll.scrollTo(0, 0) }
     }
 
     override fun onResume() {
@@ -3268,12 +3298,18 @@ class MainActivity : Activity() {
             showSettings()
         }
 
-        // Geliştirici modu: rapor kopyalama, tarayıcıyı görme, site ayrıntıları
-        val dev = settingsCard("Geliştirici")
-        switchRow(dev, "Geliştirici modu", "Rapor kopyalama, tarayıcıyı gösterme ve site ayrıntıları menüde görünür",
-            flag("devMode")) { v -> settings.edit().putBoolean("devMode", v).apply() }
-
-        results.addView(label("Fiyat Avcısı · ${Update.currentName(this)}", 12f, muted).apply {
+        // Geliştirici modu gizli: sürüm yazısına 7 kez dokununca açılır/kapanır
+        results.addView(label("Fiyat Avcısı · ${Update.currentName(this)}" + if (flag("devMode")) " · geliştirici" else "", 12f, muted).apply {
+            setOnClickListener {
+                devTaps++
+                if (devTaps >= 7) {
+                    devTaps = 0
+                    val on = !flag("devMode")
+                    settings.edit().putBoolean("devMode", on).apply()
+                    Toast.makeText(this@MainActivity, if (on) "Geliştirici modu açıldı" else "Geliştirici modu kapandı", Toast.LENGTH_SHORT).show()
+                    showSettings()
+                }
+            }
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3535,7 +3571,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 47\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 48\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

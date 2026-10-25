@@ -2551,6 +2551,24 @@ class MainActivity : Activity() {
         stopAll()
         progress.visibility = View.GONE
         render(final = true)
+        // Ürün alarmı aynı aramayla yeniden yapıldıysa: yeni ve daha uygun ilanları gruba kat
+        try {
+            val all = Alarms.load(this)
+            for ((gid, items) in all.filter { it.groupId != 0L && norm(it.groupQuery) == norm(userInput) }.groupBy { it.groupId }) {
+                val ref = items.first()
+                val byUnit = ref.unitTarget > 0 || ref.unitAmount > 0
+                val seed = offers.filter { it.kind == Kind.MATCH }.minByOrNull { it.price } ?: continue
+                val fresh = groupCandidates(seed)
+                val have = items.map { it.link.substringBefore('?') }.toSet()
+                val added = fresh.filter { it.link.substringBefore('?') !in have }.mapIndexed { i, c ->
+                    val cu = offerUnit(c)
+                    ref.copy(id = System.currentTimeMillis() + 100 + i, title = c.title, site = c.site, link = c.link, image = c.image,
+                        startPrice = c.price, lastPrice = c.price, lowest = c.price, lastCheck = 0L, status = "aramadan eklendi",
+                        unitAmount = if (byUnit) cu?.first ?: 0.0 else 0.0, unitName = if (byUnit) cu?.second.orEmpty() else "")
+                }
+                if (added.isNotEmpty()) Alarms.save(this, Alarms.load(this) + added)
+            }
+        } catch (e: Exception) {}
         // Fiyat geçmişi: bu ürünün bugünkü en ucuzu ve her eşleşen ilanın fiyatı
         try {
             val m = offers.filter { it.kind == Kind.MATCH }
@@ -3344,11 +3362,39 @@ class MainActivity : Activity() {
             contentDescription = if (on) "Alarm kurulu" else "Fiyat alarmı kur"
             setPadding(dp(8), dp(8), dp(4), dp(8))
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-            setOnClickListener { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true) }
+            setOnClickListener { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o) }
         }
     }
 
-    private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?) {
+    /** İlanın birim bölümü: birim fiyat = fiyat / bölüm ("216 adet" -> 216, "200 g" -> 0,2 kg) */
+    private fun offerUnit(o: Offer): Pair<Double, String>? {
+        if (isSet(o)) return null
+        val a = amountOf(o.title, queryAmount?.unit) ?: return null
+        val total = a.total
+        if (total <= 0) return null
+        return when (a.unit) {
+            "g" -> total / 1000 to "kg"
+            "ml" -> total / 1000 to "L"
+            else -> total to "adet"
+        }
+    }
+
+    /** Ürün alarmı için her sitenin en uygun ilanı (aynı ürün; adetliyse aynı seri/numaranın başka paketleri de) */
+    private fun groupCandidates(o: Offer): List<Offer> {
+        val unit = offerUnit(o)?.second
+        val cand = offers.filter {
+            (it.kind == Kind.MATCH || (unit != null && it.kind == Kind.OTHER_PACKAGE && !isSet(it))) &&
+                (unit == null || offerUnit(it)?.second == unit)
+        } + o
+        val metric = { x: Offer -> offerUnit(x)?.let { u -> if (unit != null) x.price / u.first else null } ?: x.price }
+        return cand.groupBy { it.site }.values.map { g -> g.minByOrNull(metric)!! }
+            .sortedBy(metric).take(10)
+    }
+
+    private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?,
+                            offer: Offer? = null) {
+        val unit = offer?.let { offerUnit(it) }
+        val group = offer?.let { groupCandidates(it) }.orEmpty()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(8), dp(22), dp(0))
@@ -3356,14 +3402,45 @@ class MainActivity : Activity() {
         box.addView(label(title.take(120), 14f, ink))
         box.addView(label(
             (if (price != null) "Şu an: ${money(price)} · $site" else "Şu an fiyat okunamadı · $site") +
+                (if (unit != null && price != null) " · ${Alarms.unitText(price / unit.first, unit.second)}" else "") +
                 if (available == false) " · stokta yok" else "",
             13f, muted, true
         ).apply { setPadding(0, dp(6), 0, dp(10)) })
+
+        // Ne takip edilsin: bu ilan mı, ürün bütün sitelerde mi
+        val scopeGroup = android.widget.RadioGroup(this)
+        val rOne = android.widget.RadioButton(this).apply { id = View.generateViewId(); text = "Sadece bu ilan ($site)" }
+        val rAll = android.widget.RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Bu ürünü bütün sitelerde takip et (${group.size} site: ${group.joinToString(", ") { it.site }})"
+        }
+        if (group.size >= 2) {
+            box.addView(label("Ne takip edilsin?", 13f, ink, true))
+            scopeGroup.addView(rOne); scopeGroup.addView(rAll)
+            scopeGroup.check(rAll.id)
+            box.addView(scopeGroup)
+        }
+
+        // Hedef: toplam fiyat mı, adet başı mı
+        val modeGroup = android.widget.RadioGroup(this).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
+        val mTotal = android.widget.RadioButton(this).apply { id = View.generateViewId(); text = "Toplam fiyat" }
+        val mUnit = android.widget.RadioButton(this).apply { id = View.generateViewId(); text = "${unit?.second?.replaceFirstChar { it.uppercase() } ?: "Adet"} başı" }
         val target = EditText(this).apply {
-            hint = "Hedef fiyat (boş: her düşüşte haber ver)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSingleLine()
         }
+        val setHint = {
+            target.hint = if (unit != null && modeGroup.checkedRadioButtonId == mUnit.id)
+                "Hedef TL/${unit.second} (boş: her düşüşte)" else "Hedef fiyat TL (boş: her düşüşte)"
+        }
+        if (unit != null) {
+            box.addView(label("Hedef nasıl olsun?", 13f, ink, true).apply { setPadding(0, dp(8), 0, 0) })
+            modeGroup.addView(mTotal); modeGroup.addView(mUnit)
+            modeGroup.check(mUnit.id)
+            modeGroup.setOnCheckedChangeListener { _, _ -> setHint() }
+            box.addView(modeGroup)
+        }
+        setHint()
         box.addView(target)
         val stock = android.widget.CheckBox(this).apply {
             text = "Stoğa girince de haber ver"
@@ -3378,26 +3455,50 @@ class MainActivity : Activity() {
             .setView(box)
             .setPositiveButton("Kur") { _, _ -> try {
                 val t = target.text.toString().replace(",", ".").toDoubleOrNull() ?: 0.0
-                val p = price ?: 0.0
-                Alarms.add(this, Alarm(
-                    id = existing?.id ?: System.currentTimeMillis(), title = title, site = site, link = link, image = image,
-                    startPrice = existing?.startPrice ?: p, lastPrice = p, lowest = if (p > 0) p else 0.0, target = t,
-                    wantStock = stock.isChecked, inStock = available, lastCheck = 0L, status = "henüz kontrol edilmedi",
-                ))
+                val byUnit = unit != null && modeGroup.checkedRadioButtonId == mUnit.id
+                val wantGroup = group.size >= 2 && scopeGroup.checkedRadioButtonId == rAll.id
+                if (wantGroup) {
+                    val gid = System.currentTimeMillis()
+                    val name = identity?.label ?: query
+                    val items = group.mapIndexed { i, c ->
+                        val cu = offerUnit(c)
+                        Alarm(
+                            id = gid + i, title = c.title, site = c.site, link = c.link, image = c.image,
+                            startPrice = c.price, lastPrice = c.price, lowest = c.price,
+                            target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = true,
+                            lastCheck = 0L, status = "henüz kontrol edilmedi",
+                            unitAmount = if (byUnit) cu?.first ?: 0.0 else 0.0, unitName = if (byUnit) cu?.second.orEmpty() else "",
+                            unitTarget = if (byUnit) t else 0.0, groupId = gid, groupName = name, groupQuery = userInput,
+                        )
+                    }
+                    Alarms.addGroup(this, items)
+                    Toast.makeText(this, "Ürün alarmı kuruldu: ${items.size} sitede takip", Toast.LENGTH_SHORT).show()
+                } else {
+                    val p = price ?: 0.0
+                    Alarms.add(this, Alarm(
+                        id = existing?.id ?: System.currentTimeMillis(), title = title, site = site, link = link, image = image,
+                        startPrice = existing?.startPrice ?: p, lastPrice = p, lowest = if (p > 0) p else 0.0,
+                        target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = available,
+                        lastCheck = 0L, status = "henüz kontrol edilmedi",
+                        unitAmount = if (unit != null) unit.first else 0.0, unitName = unit?.second.orEmpty(),
+                        unitTarget = if (byUnit) t else 0.0,
+                    ))
+                    Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                }
                 askNotificationPermission()
-                Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
                 if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
             } catch (e: Exception) {
-                // Çökmek yerine hatayı göster
                 AlertDialog.Builder(this).setTitle("Alarm kurulamadı")
-                    .setMessage(e.javaClass.simpleName + ": " + (e.message ?: "") + "\n\n" + android.util.Log.getStackTraceString(e).take(800))
-                    .setPositiveButton("Kopyala") { _, _ ->
-                        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                            .setPrimaryClip(ClipData.newPlainText("hata", android.util.Log.getStackTraceString(e)))
-                    }
+                    .setMessage(e.javaClass.simpleName + ": " + (e.message ?: ""))
                     .setNegativeButton("Kapat", null).show()
             } }
-            .apply { if (existing != null) setNeutralButton("Alarmı sil") { _, _ -> Alarms.remove(this@MainActivity, existing.id); if (offers.isNotEmpty() && !running) render(final = finished) } }
+            .apply {
+                if (existing != null) setNeutralButton("Alarmı sil") { _, _ ->
+                    if (existing.groupId != 0L) Alarms.removeGroup(this@MainActivity, existing.groupId)
+                    else Alarms.remove(this@MainActivity, existing.id)
+                    if (offers.isNotEmpty() && !running) render(final = finished)
+                }
+            }
             .setNegativeButton("Vazgeç", null)
             .show()
     }
@@ -3453,7 +3554,52 @@ class MainActivity : Activity() {
             return
         }
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
-        for (a in list) {
+        // Ürün alarmları: bir kart, içinde siteler
+        for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
+            val best = items.filter { Alarms.metric(it) != null }.minByOrNull { Alarms.metric(it)!! } ?: items.first()
+            val unit = best.unitAmount > 0
+            val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 14, line)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+            }
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(label("Ürün alarmı · ${items.size} site", 12f, gold, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label("Ara ve güncelle", 13f, gold, true).apply {
+                    setPadding(dp(8), dp(2), dp(8), dp(2))
+                    setOnClickListener { input.setText(best.groupQuery); startTest() }
+                })
+                addView(label("Sil", 13f, red, true).apply {
+                    setPadding(dp(8), dp(2), dp(2), dp(2))
+                    setOnClickListener { Alarms.removeGroup(this@MainActivity, gid); showAlarms() }
+                })
+            })
+            card.addView(label(best.groupName.ifEmpty { best.title }, 16f, ink, true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            Alarms.metric(best)?.let { m ->
+                card.addView(label("En uygun: ${best.site} · ${fmt(m)}" + if (unit) " · ${money(best.lastPrice)}" else "", 14f, green, true))
+            }
+            val t = if (best.unitTarget > 0) best.unitTarget else best.target
+            card.addView(label(if (t > 0) "Hedef: ${fmt(t)}" else "Hedef: her ucuzlamada haber ver", 12f, muted).apply { setPadding(0, dp(2), 0, dp(6)) })
+            items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { a ->
+                card.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, dp(4), 0, dp(4))
+                    setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+                    addView(label("● ", 12f, siteColors[a.site] ?: muted))
+                    addView(label(a.site, 13f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(label((Alarms.metric(a)?.let { fmt(it) } ?: "?") + if (a.status.startsWith("fiyat okunamadı")) " · okunamadı" else "", 13f, muted))
+                })
+            }
+            if (items.any { it.lastCheck > 0 }) card.addView(label("Son kontrol ${df.format(java.util.Date(items.maxOf { it.lastCheck }))}", 11f, muted)
+                .apply { setPadding(0, dp(4), 0, 0) })
+            results.addView(card, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+        }
+        for (a in list.filter { it.groupId == 0L }) {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 background = rounded(surface, 14, line)
@@ -3486,7 +3632,12 @@ class MainActivity : Activity() {
             val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(6), 0, 0) }
             if (a.startPrice > 0) chips.addView(pill("başta ${money(a.startPrice)}", ink, greyBg))
             if (a.lowest > 0 && a.lowest < a.startPrice) chips.addView(pill("en düşük ${money(a.lowest)}", green, greenBg))
-            chips.addView(pill(if (a.target > 0) "hedef ${money(a.target)}" else "her düşüşte", ink, amberBg))
+            chips.addView(pill(when {
+                a.unitTarget > 0 -> "hedef ${Alarms.unitText(a.unitTarget, a.unitName)}"
+                a.target > 0 -> "hedef ${money(a.target)}"
+                else -> "her düşüşte"
+            }, ink, amberBg))
+            a.unitPrice()?.let { chips.addView(pill(Alarms.unitText(it, a.unitName), ink, greyBg)) }
             if (a.wantStock) chips.addView(pill(when (a.inStock) { false -> "stok bekleniyor"; true -> "stokta"; else -> "stok takibi" },
                 if (a.inStock == false) orange else green, if (a.inStock == false) orangeBg else greenBg))
             col.addView(chips)
@@ -3588,7 +3739,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 49\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 50\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

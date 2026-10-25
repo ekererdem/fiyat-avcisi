@@ -35,7 +35,17 @@ data class Alarm(
     var inStock: Boolean?,       // son kontrolde stokta mıydı (bilinmiyorsa null)
     var lastCheck: Long,
     var status: String,
-)
+    // Adet / kg / L başı takip: birim fiyat = fiyat / unitAmount (0 = birim yok)
+    var unitAmount: Double = 0.0,
+    var unitName: String = "",
+    var unitTarget: Double = 0.0,     // birim başı hedef (0 = yok)
+    // Ürün alarmı: aynı ürünün farklı sitelerdeki ilanları tek grup
+    var groupId: Long = 0,
+    var groupName: String = "",
+    var groupQuery: String = "",
+) {
+    fun unitPrice(p: Double = lastPrice): Double? = if (unitAmount > 0 && p > 0) p / unitAmount else null
+}
 
 object Alarms {
     private const val CHANNEL = "alarms"
@@ -63,6 +73,8 @@ object Alarms {
                     j.optDouble("start", 0.0), j.optDouble("last", 0.0), j.optDouble("low", 0.0), j.optDouble("target", 0.0),
                     j.optBoolean("wantStock"), if (j.has("inStock")) j.optBoolean("inStock") else null,
                     j.optLong("checked"), j.optString("status"),
+                    j.optDouble("unitAmount", 0.0), j.optString("unitName"), j.optDouble("unitTarget", 0.0),
+                    j.optLong("groupId", 0), j.optString("groupName"), j.optString("groupQuery"),
                 )
             } catch (e: Exception) { null }
         }.toMutableList()
@@ -76,6 +88,8 @@ object Alarms {
                 put("start", a.startPrice); put("last", a.lastPrice); put("low", a.lowest); put("target", a.target)
                 put("wantStock", a.wantStock); a.inStock?.let { put("inStock", it) }
                 put("checked", a.lastCheck); put("status", a.status)
+                put("unitAmount", a.unitAmount); put("unitName", a.unitName); put("unitTarget", a.unitTarget)
+                put("groupId", a.groupId); put("groupName", a.groupName); put("groupQuery", a.groupQuery)
             })
         }
         prefs(ctx).edit().putString("list", arr.toString()).apply()
@@ -92,6 +106,27 @@ object Alarms {
     fun remove(ctx: Context, id: Long) {
         save(ctx, load(ctx).filter { it.id != id })
     }
+
+    /** Bir ürün alarmının bütün ilanlarını ekler (aynı gruptaki eskilerin yerine) */
+    fun addGroup(ctx: Context, items: List<Alarm>) {
+        if (items.isEmpty()) return
+        val gid = items.first().groupId
+        val links = items.map { it.link.substringBefore('?') }.toSet()
+        val list = load(ctx)
+        list.removeAll { it.groupId == gid || it.link.substringBefore('?') in links }
+        list.addAll(0, items)
+        save(ctx, list)
+    }
+
+    fun removeGroup(ctx: Context, gid: Long) {
+        prefs(ctx).edit().remove("gbest_$gid").apply()
+        save(ctx, load(ctx).filter { it.groupId != gid })
+    }
+
+    /** Ölçü: birim fiyat varsa o, yoksa fiyat */
+    fun metric(a: Alarm): Double? = a.unitPrice() ?: a.lastPrice.takeIf { it > 0 }
+
+    fun unitText(v: Double, unit: String) = "${tl.format(v)} TL/$unit"
 
     // ---------- Arka plan zamanlama ----------
 
@@ -210,11 +245,21 @@ object Alarms {
                 val p = r.price
                 if (p != null) {
                     val dropped = a.lastPrice > 0 && p < a.lastPrice - 0.5
-                    val hitTarget = a.target > 0 && p <= a.target && (a.lastPrice <= 0 || a.lastPrice > a.target)
-                    if ((a.target <= 0 && dropped) || hitTarget) {
-                        notify(ctx, a, "Fiyat düştü: ${money(p)}",
+                    // Hedef: adet başıysa birim fiyatla, değilse toplam fiyatla
+                    val hitTarget = if (a.unitTarget > 0 && a.unitAmount > 0)
+                        p / a.unitAmount <= a.unitTarget && (a.lastPrice <= 0 || a.lastPrice / a.unitAmount > a.unitTarget)
+                    else a.target > 0 && p <= a.target && (a.lastPrice <= 0 || a.lastPrice > a.target)
+                    val anyDrop = a.target <= 0 && a.unitTarget <= 0
+                    // Ürün alarmındaki ilanlar tek tek bildirim göndermez; grup olarak aşağıda değerlendirilir
+                    if (a.groupId == 0L && ((anyDrop && dropped) || hitTarget)) {
+                        val unitNow = a.unitPrice(p)
+                        notify(ctx, a, "Fiyat düştü: ${money(p)}" + (unitNow?.let { " (${unitText(it, a.unitName)})" } ?: ""),
                             "${a.title.take(60)} · ${a.site} · önce ${money(a.lastPrice)}" +
-                                if (a.target > 0) " · hedefin ${money(a.target)}" else "")
+                                when {
+                                    a.unitTarget > 0 -> " · hedefin ${unitText(a.unitTarget, a.unitName)}"
+                                    a.target > 0 -> " · hedefin ${money(a.target)}"
+                                    else -> ""
+                                })
                         notified++
                     }
                     a.lastPrice = p
@@ -231,6 +276,25 @@ object Alarms {
                 a.lastCheck = System.currentTimeMillis()
                 a.status = "kontrol edilemedi (${e.javaClass.simpleName})"
             }
+        }
+        // Ürün alarmları: gruptaki en uygun ilan hedefe indiyse ya da daha önceki en iyiden ucuzladıysa tek bildirim
+        for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
+            val best = items.filter { metric(it) != null }.minByOrNull { metric(it)!! } ?: continue
+            val m = metric(best)!!
+            val key = "gbest_$gid"
+            val prev = prefs(ctx).getFloat(key, 0f).toDouble()
+            val target = items.first().let { if (it.unitTarget > 0) it.unitTarget else it.target }
+            val unit = best.unitAmount > 0
+            val fmt = { v: Double -> if (unit) unitText(v, best.unitName) else money(v) }
+            val hit = if (target > 0) m <= target && (prev <= 0 || prev > target) else prev > 0 && m < prev * 0.995
+            if (hit) {
+                notify(ctx, best, "${best.site}'da ${fmt(m)}",
+                    "${best.groupName.ifEmpty { best.title }.take(60)} · ${money(best.lastPrice)}" +
+                        (if (prev > 0) " · önceki en iyi ${fmt(prev)}" else "") +
+                        (if (target > 0) " · hedefin ${fmt(target)}" else ""))
+                notified++
+            }
+            prefs(ctx).edit().putFloat(key, m.toFloat()).apply()
         }
         // Kontrol sırasında eklenen/silinen alarmlar kaybolmasın: güncel listeyle birleştir
         val current = load(ctx)

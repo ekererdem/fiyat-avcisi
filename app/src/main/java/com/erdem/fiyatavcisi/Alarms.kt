@@ -40,7 +40,12 @@ data class Alarm(
 object Alarms {
     private const val CHANNEL = "alarms"
     private const val JOB_ID = 4242
-    const val INTERVAL_MS = 2L * 60 * 60 * 1000   // 2 saatte bir
+    /** Kontrol sıklığı (saat), ayarlardan seçilir */
+    fun hours(ctx: Context) = prefs(ctx).getInt("hours", 2)
+    fun setHours(ctx: Context, h: Int) {
+        prefs(ctx).edit().putInt("hours", h).apply()
+        schedule(ctx, load(ctx).isNotEmpty(), force = true)
+    }
 
     private val ua = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
@@ -90,13 +95,14 @@ object Alarms {
 
     // ---------- Arka plan zamanlama ----------
 
-    fun schedule(ctx: Context, on: Boolean) {
+    fun schedule(ctx: Context, on: Boolean, force: Boolean = false) {
         val js = ctx.getSystemService(JobScheduler::class.java) ?: return
-        if (!on) { js.cancel(JOB_ID); return }
+        if (!on || force) js.cancel(JOB_ID)
+        if (!on) return
         if (js.allPendingJobs.any { it.id == JOB_ID }) return
         val b = JobInfo.Builder(JOB_ID, ComponentName(ctx, AlarmJobService::class.java))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setPeriodic(INTERVAL_MS)
+            .setPeriodic(hours(ctx) * 3_600_000L)
         // Telefon yeniden başlayınca da sürsün (izin yoksa bu kısım atlanır)
         try { js.schedule(b.setPersisted(true).build()) } catch (e: Exception) {
             try { js.schedule(b.setPersisted(false).build()) } catch (x: Exception) {}

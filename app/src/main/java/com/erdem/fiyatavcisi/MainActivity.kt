@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -153,7 +154,10 @@ class MainActivity : Activity() {
     private var queryAmount: Amount? = null   // aramadaki miktar: 200 g, 80 adet, 100 ml
     private var acceptedMods: Set<String> = emptySet()
     private var requiredSeries: Set<String> = emptySet()
-    private val testMode = true          // test sürümü: seçimler hatırlanmaz
+    private val settings by lazy { getSharedPreferences("ayarlar", Context.MODE_PRIVATE) }
+    private fun flag(k: String, def: Boolean = false) = settings.getBoolean(k, def)
+    private fun siteOn(name: String) = settings.getBoolean("site_$name", true)
+    private var screen = "home"           // home / results / alarms / settings
     private var familyTried = false      // model bulunamayınca aynı serinin diğer yılları arandı mı   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
@@ -513,6 +517,12 @@ class MainActivity : Activity() {
             .show()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // İzin ekranından dönünce durumları yenile
+        if (screen == "settings") showSettings()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShare(intent)
@@ -636,12 +646,16 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.40", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.41", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
         }
         menuBtn.setOnClickListener { showMenu(menuBtn) }
+        header.addView(label("⚙", 22f, Color.WHITE).apply {
+            setPadding(dp(12), dp(2), dp(8), dp(2))
+            setOnClickListener { showSettings() }
+        })
         header.addView(menuBtn)
         root.addView(header)
 
@@ -795,9 +809,11 @@ class MainActivity : Activity() {
             menu.add(0, 2, 1, "Raporu kopyala")
             menu.add(0, 3, 2, "Raporu paylaş")
             menu.add(0, 4, 0, "🔔 Alarmlarım")
+            menu.add(0, 5, 0, "⚙ Ayarlar")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     4 -> showAlarms()
+                    5 -> showSettings()
                     1 -> toggleBrowser()
                     2 -> copyReport()
                     3 -> shareReport()
@@ -811,6 +827,7 @@ class MainActivity : Activity() {
     /** Açılış ekranı: kısa açıklama, son aramalar */
     private fun showHome() {
         if (running) return
+        screen = "home"
         results.removeAllViews()
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -878,7 +895,7 @@ class MainActivity : Activity() {
     /** Arama sırasında her sitenin durumu: bekliyor / bitti (ürün sayısı) / ilgisiz / sorun */
     private fun updateSiteChips() {
         siteChips.removeAllViews()
-        for (s in sites) {
+        for (s in sites.filter { siteOn(it.name) }) {
             val line = siteSummary.lastOrNull { it.startsWith(s.name + ":") }
             val (txt, fg, bg) = when {
                 line == null -> Triple("${s.name} …", muted, greyBg)
@@ -1073,7 +1090,14 @@ class MainActivity : Activity() {
     }
 
     /** Siteleri aynı anda tarar; her site bitince [onEach], hepsi bitince [onAll] */
-    private fun runSites(list: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
+    private fun runSites(all: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
+        // Ayarlardan kapatılan siteler taranmaz
+        val list = all.filter { siteOn(it.name) }
+        if (list.isEmpty()) {
+            siteSummary.add("Hiçbir site açık değil (Ayarlar → Siteler)")
+            onAll()
+            return
+        }
         val gen = ++phaseGen
         var left = list.size
         val t0 = android.os.SystemClock.elapsedRealtime()
@@ -1167,7 +1191,8 @@ class MainActivity : Activity() {
         resolveQuery = cleanInput
         familyTried = false
         // Test sürümünde hafıza okunmaz: her arama sıfırdan (sarı satıra basmaya gerek yok)
-        val mem = { k: String -> if (testMode) null else prefs.getString(k + norm(userInput), null) }
+        // "Seçimlerimi hatırla" kapalıysa her arama sıfırdan
+        val mem = { k: String -> if (!flag("remember")) null else prefs.getString(k + norm(userInput), null) }
         acceptedMods = mem("m:")?.split("|")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         requiredSeries = acceptedMods
 
@@ -2284,6 +2309,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(final: Boolean) {
+        screen = "results"
         prepareResults()
         updateSiteChips()
         val y = resultsScroll.scrollY
@@ -2324,7 +2350,7 @@ class MainActivity : Activity() {
         val fm = matches.filter { shown(it) }
         val fo = others.filter { shown(it) }
         if (fm.size < matches.size || fo.size < others.size) {
-            results.addView(label("Filtre: ${fm.size + fo.size}/${matches.size + others.size} ilan gösteriliyor", 12f, gold, true)
+            results.addView(label("Filtre ve kurallar: ${fm.size + fo.size}/${matches.size + others.size} ilan gösteriliyor", 12f, gold, true)
                 .apply { setPadding(dp(6), dp(2), dp(6), dp(4)) })
         }
 
@@ -2399,6 +2425,15 @@ class MainActivity : Activity() {
     /** Filtreye uyuyor mu: site gizli değil ve yazılan kelimelerin hepsi adda/satıcıda geçiyor */
     private fun shown(o: Offer): Boolean {
         if (o.site in hiddenSites) return false
+        // Ayarlardaki kurallar
+        if (flag("hideAbroad") && o.origin.isNotEmpty() && !o.origin.startsWith("Türkiye")) return false
+        if (flag("hideUsed") && o.kind == Kind.USED) return false
+        if (flag("hideSuspicious") && o.kind == Kind.SUSPICIOUS) return false
+        if (flag("hideImporter") && (o.warranty + " " + o.warrantyType).lowercase(Locale("tr", "TR")).contains("ithalatçı")) return false
+        val minR = settings.getFloat("minRating", 0f)
+        if (minR > 0 && ratingNum(o) > 0 && ratingNum(o) < minR) return false
+        val minC = settings.getInt("minReviews", 0)
+        if (minC > 0 && countNum(o.ratingCount) < minC) return false
         val words = filterText.trim().split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return true
         val nt = canonNorm(o.title + " " + o.seller + " " + o.site)
@@ -2659,6 +2694,183 @@ class MainActivity : Activity() {
         else -> "farklı ürün"
     }
 
+    // ---------- Ayarlar ----------
+
+    private fun settingsCard(title: String): LinearLayout {
+        results.addView(label(title, 15f, ink, true).apply { setPadding(dp(6), dp(18), dp(6), dp(6)) })
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Color.WHITE, 16, line)
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+        }
+        results.addView(card, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(2), 0, dp(2), 0) })
+        return card
+    }
+
+    private fun rowBase(card: LinearLayout, title: String, sub: String, subColor: Int = muted): LinearLayout {
+        if (card.childCount > 0) card.addView(View(this).apply { setBackgroundColor(line) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(label(title, 15f, ink))
+        if (sub.isNotEmpty()) col.addView(label(sub, 12f, subColor).apply { setPadding(0, dp(2), dp(8), 0) })
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(row)
+        return row
+    }
+
+    /** Durum + düğme satırı (izinler) */
+    private fun actionRow(card: LinearLayout, title: String, ok: Boolean?, sub: String, button: String, action: () -> Unit) {
+        val stateText = when (ok) { true -> "✓ Açık"; false -> "✗ Kapalı"; null -> "" }
+        val row = rowBase(card, title, listOf(stateText, sub).filter { it.isNotEmpty() }.joinToString(" · "),
+            when (ok) { true -> green; false -> red; null -> muted })
+        row.addView(label(button, 13f, ink, true).apply {
+            background = rounded(if (ok == true) greyBg else gold, 12)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener { action() }
+        })
+    }
+
+    private fun switchRow(card: LinearLayout, title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+        val row = rowBase(card, title, sub)
+        row.addView(android.widget.Switch(this).apply {
+            isChecked = checked
+            thumbTintList = android.content.res.ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(gold, Color.parseColor("#D6D3D1")))
+            trackTintList = android.content.res.ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Color.parseColor("#E9C46A"), Color.parseColor("#E7E5E4")))
+            setOnCheckedChangeListener { _, v -> onChange(v) }
+        })
+    }
+
+    /** Seçenekli satır: dokununca liste açılır */
+    private fun choiceRow(card: LinearLayout, title: String, sub: String, options: List<String>, current: Int, onPick: (Int) -> Unit) {
+        val row = rowBase(card, title, sub)
+        row.addView(label("${options.getOrElse(current) { options[0] }} ▾", 14f, gold, true).apply {
+            setPadding(dp(10), dp(6), 0, dp(6))
+        })
+        row.setOnClickListener {
+            AlertDialog.Builder(this).setTitle(title)
+                .setSingleChoiceItems(options.toTypedArray<CharSequence>(), current) { d, which ->
+                    onPick(which); d.dismiss(); showSettings()
+                }.show()
+        }
+    }
+
+    private fun openIntent(vararg intents: Intent) {
+        for (i in intents) {
+            try { startActivity(i); return } catch (e: Exception) {}
+        }
+        Toast.makeText(this, "Bu ayar telefonda açılamadı", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun appDetails() = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+
+    private fun showSettings() {
+        if (running) return
+        screen = "settings"
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        progress.visibility = View.GONE
+        status.visibility = View.GONE
+        results.removeAllViews()
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), 0)
+        }
+        head.addView(label("Ayarlar", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label("Kapat", 14f, gold, true).apply {
+            setPadding(dp(10), dp(6), dp(4), dp(6))
+            setOnClickListener { if (offers.isNotEmpty()) { filterBar.visibility = View.VISIBLE; status.visibility = View.VISIBLE; chipsScroll.visibility = View.VISIBLE; render(final = finished) } else showHome() }
+        })
+        results.addView(head)
+
+        // İzinler
+        val perm = settingsCard("İzinler")
+        val nm = getSystemService(android.app.NotificationManager::class.java)
+        val notifOk = nm?.areNotificationsEnabled() == true
+        actionRow(perm, "Bildirimler", notifOk, "Fiyat düşünce haber vermek için", if (notifOk) "Ayarlar" else "İzin ver") {
+            if (!notifOk && android.os.Build.VERSION.SDK_INT >= 33 && !settings.getBoolean("notifAsked", false)) {
+                settings.edit().putBoolean("notifAsked", true).apply()
+                askNotificationPermission()
+            } else {
+                openIntent(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName), appDetails())
+            }
+        }
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val batteryOk = pm?.isIgnoringBatteryOptimizations(packageName) == true
+        actionRow(perm, "Pil kısıtlaması yok", batteryOk, "Alarmların arka planda çalışması için", if (batteryOk) "Ayarlar" else "Kaldır") {
+            if (!batteryOk) openIntent(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
+                Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails())
+            else openIntent(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails())
+        }
+        actionRow(perm, "Otomatik başlatma (Xiaomi)", null, "Telefon açılınca alarmlar sürsün diye açık olmalı; durumu okunamıyor", "Aç") {
+            openIntent(
+                Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")),
+                Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
+                appDetails())
+        }
+        actionRow(perm, "Uygulama ayarları", null, "Android'in bu uygulama için bütün ayarları", "Aç") { openIntent(appDetails()) }
+
+        // Siteler
+        val src = settingsCard("Taranan siteler")
+        sites.forEach { site ->
+            switchRow(src, site.name, "", siteOn(site.name)) { v -> settings.edit().putBoolean("site_${site.name}", v).apply() }
+        }
+
+        // Kurallar
+        val rules = settingsCard("Kurallar (sonuçlarda gizlenenler)")
+        switchRow(rules, "Yurtdışı / ithal ilanları gizle", "International Version, menşei yurtdışı, TU/A olmayan cihazlar",
+            flag("hideAbroad")) { v -> settings.edit().putBoolean("hideAbroad", v).apply() }
+        switchRow(rules, "İthalatçı garantili ilanları gizle", "Ürün sayfası açılan pahalı ilanlarda geçerli",
+            flag("hideImporter")) { v -> settings.edit().putBoolean("hideImporter", v).apply() }
+        switchRow(rules, "Yenilenmiş / ikinci el / teşhir gizle", "", flag("hideUsed")) { v -> settings.edit().putBoolean("hideUsed", v).apply() }
+        switchRow(rules, "Şüpheli ucuz ilanları gizle", "Gerçek fiyatın çok altındaki taklit ya da yanlış ilanlar",
+            flag("hideSuspicious")) { v -> settings.edit().putBoolean("hideSuspicious", v).apply() }
+        val ratings = listOf(0f, 3.5f, 4f, 4.5f)
+        choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
+            listOf("Yok", "3,5", "4,0", "4,5"), ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
+            settings.edit().putFloat("minRating", ratings[i]).apply()
+        }
+        val counts = listOf(0, 10, 50, 100)
+        choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
+            listOf("Yok", "10", "50", "100"), counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
+            settings.edit().putInt("minReviews", counts[i]).apply()
+        }
+
+        // Alarmlar
+        val al = settingsCard("Fiyat alarmları")
+        val hours = listOf(1, 2, 4, 6, 12)
+        choiceRow(al, "Kontrol sıklığı", "Sık kontrol biraz daha pil harcar",
+            hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
+        actionRow(al, "Alarmlarım", null, "${Alarms.load(this).size} ürün takipte", "Aç") { showAlarms() }
+
+        // Hafıza
+        val mem = settingsCard("Hafıza")
+        switchRow(mem, "Seçimlerimi hatırla", "\"Hangisini kastettin?\" sorusundaki seçimin bir dahaki aramada sorulmaz",
+            flag("remember")) { v -> settings.edit().putBoolean("remember", v).apply() }
+        actionRow(mem, "Son aramaları temizle", null, "${recentSearches().size} arama kayıtlı", "Temizle") {
+            prefs.edit().remove("recent").apply()
+            Toast.makeText(this, "Son aramalar silindi", Toast.LENGTH_SHORT).show()
+            showSettings()
+        }
+
+        results.addView(label("Fiyat Avcısı · test 0.41", 12f, muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(20), 0, dp(10))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        resultsScroll.post { resultsScroll.scrollTo(0, 0) }
+    }
+
     // ---------- Fiyat alarmı ----------
 
     /** İlan kartındaki zil: dokununca alarm kurma penceresi */
@@ -2693,7 +2905,7 @@ class MainActivity : Activity() {
             isChecked = available == false
         }
         box.addView(stock)
-        box.addView(label("Fiyatlar ${Alarms.INTERVAL_MS / 3_600_000} saatte bir kontrol edilir.", 12f, muted)
+        box.addView(label("Fiyatlar ${Alarms.hours(this)} saatte bir kontrol edilir.", 12f, muted)
             .apply { setPadding(0, dp(6), 0, 0) })
         val existing = Alarms.load(this).firstOrNull { it.link.substringBefore('?') == link.substringBefore('?') }
         AlertDialog.Builder(this)
@@ -2735,11 +2947,12 @@ class MainActivity : Activity() {
     /** Alarmlarım ekranı */
     private fun showAlarms() {
         if (running) return
+        screen = "alarms"
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         progress.visibility = View.GONE
         status.visibility = View.VISIBLE
-        status.text = "Alarmlar ${Alarms.INTERVAL_MS / 3_600_000} saatte bir arka planda kontrol edilir"
+        status.text = "Alarmlar ${Alarms.hours(this)} saatte bir arka planda kontrol edilir"
         results.removeAllViews()
         val list = Alarms.load(this)
         val head = LinearLayout(this).apply {
@@ -2874,7 +3087,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 40\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 41\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

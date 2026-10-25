@@ -1336,7 +1336,7 @@ class MainActivity : Activity() {
                 d != null && cards == 0 && d.optInt("links") == 0 && !reloaded ->
                     runSite(v, site, q, simpleUsed, true, onDone)
                 // Sonuç yok ya da öneri listesi: bir kez sade aramayla (tür + ölçü) sor
-                !simpleUsed && !isBarcodeQ && (d?.optBoolean("noResults") == true || isIrrelevant(d, q)) &&
+                !simpleUsed && !isBarcodeQ && (d?.optBoolean("noResults") == true || (d != null && cards == 0) || isIrrelevant(d, q)) &&
                     simplifiedQuery(q).let { it.isNotEmpty() && norm(it) != norm(q) } ->
                     runSite(v, site, simplifiedQuery(q), true, reloaded, onDone)
                 // Çok az sonuç geldiyse (site tam ifadeyi arıyor olabilir): sade aramayı da yap, sonuçları birleştir
@@ -1810,7 +1810,9 @@ class MainActivity : Activity() {
                 t in colorWords || t in softWords -> {}
                 isNum && next != null && next in unitNorm -> {}
                 isNum && ((prev != null && prev in sizeWords) || (next != null && next in sizeWords)) -> hard.add("no$t")
-                isNum && prev != null -> hard.add(prev + t)
+                // "iphone 15" -> iphone15; ama "4 in 1 16.000" gibi sayı arkasından gelen sayı tek başına aranır
+                isNum && prev != null && prev.any { it.isLetter() } -> hard.add(prev + t)
+                isNum && t.length >= 3 -> hard.add(t)
                 t.length >= 3 -> words.add(if (t.length > 5) t.removeSuffix("lar").removeSuffix("ler") else t)
             }
         }
@@ -1843,7 +1845,9 @@ class MainActivity : Activity() {
             val n = norm(w)
             val next = toks.getOrNull(i + 1)?.let { norm(it) }
             n.isNotEmpty() && n !in unitNorm && !qty.matches(n) && n !in colorWords &&
-                !(n.all { it.isDigit() } && next != null && next in unitNorm)
+                !(n.all { it.isDigit() } && next != null && next in unitNorm) &&
+                // Birimsiz büyük sayı ("16.000", "20000"): sitelerin aramasını daraltır, sade aramada atılır
+                !w.matches(Regex("[0-9]{1,3}([.,][0-9]{3})+|[0-9]{4,}"))
         }
         val s1 = keep.joinToString(" ")
         if (keep.size >= 2 && norm(s1) != norm(q)) return s1

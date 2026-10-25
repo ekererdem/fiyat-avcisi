@@ -366,7 +366,8 @@ class MainActivity : Activity() {
     private lateinit var filterBar: LinearLayout
     private lateinit var filterInput: EditText
     private lateinit var sortBtn: TextView
-    private lateinit var siteToggles: LinearLayout
+    private lateinit var sitesBtn: TextView
+    private var finishedAt = 0L
     private var filterText = ""
     private var sortMode = 0
     private val hiddenSites = HashSet<String>()
@@ -683,7 +684,7 @@ class MainActivity : Activity() {
             screen == "settings" || screen == "alarms" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
-                    chipsScroll.visibility = View.VISIBLE
+                    chipsScroll.visibility = if (running) View.VISIBLE else View.GONE
                     status.visibility = View.VISIBLE
                     render(final = finished)
                 } else showHome()
@@ -967,25 +968,26 @@ class MainActivity : Activity() {
                 sortNames.forEachIndexed { i, n -> menu.add(0, i, i, (if (i == sortMode) "✓ " else "") + n) }
                 setOnMenuItemClickListener {
                     sortMode = it.itemId
-                    sortBtn.text = if (sortMode == 0) "Sırala ▾" else "${sortNames[sortMode]} ▾"
+                    sortBtn.text = if (sortMode == 0) "Sırala ▾" else "Sıralı ▾"
                     render(final = finished)
                     true
                 }
                 show()
             }
         }
+        // Siteler: gösterilecek siteleri seçme listesi (ayrı çip satırı yerine tek düğme)
+        sitesBtn = label("Siteler ▾", 14f, ink, true).apply {
+            background = rounded(surface, 12, line)
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            setOnClickListener { chooseSites() }
+        }
+        fRow.addView(sitesBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = dp(8) })
         fRow.addView(sortBtn, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { marginStart = dp(8) })
         filterBar.addView(fRow)
-        siteToggles = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, 0)
-        }
-        filterBar.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(siteToggles)
-        })
         root.addView(filterBar)
 
         // Tarayıcı arkada tam boyutta durur, sonuç listesi üstünü kapatır
@@ -2547,9 +2549,12 @@ class MainActivity : Activity() {
     private fun finishSearch() {
         if (finished) return
         finished = true
+        finishedAt = android.os.SystemClock.elapsedRealtime()
         running = false
         stopAll()
         progress.visibility = View.GONE
+        // Site durum çipleri sadece arama sürerken görünür; sonuç gelince filtre satırı kalır
+        chipsScroll.visibility = View.GONE
         render(final = true)
         // Ürün alarmı aynı aramayla yeniden yapıldıysa: yeni ve daha uygun ilanları gruba kat
         try {
@@ -2642,7 +2647,7 @@ class MainActivity : Activity() {
         val others = offers.filter { it.kind != Kind.MATCH }.sortedBy { it.price }
         markUnitPrices(matches)
 
-        val took = elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
+        val took = elapsedText((if (finished && finishedAt > 0) finishedAt else android.os.SystemClock.elapsedRealtime()) - startedAt)
         if (final) {
             status.text = (if (matches.isEmpty()) "Aynı ürün bulunamadı; benzerleri aşağıda"
             else "${matches.size} teklif · ${siteSummary.count { it.contains("ürün okundu") }} site") + " · $took"
@@ -2767,26 +2772,31 @@ class MainActivity : Activity() {
         else -> list
     }
 
-    /** Site çipleri: dokununca o sitenin ilanları gizlenir/gösterilir */
+    /** Siteler düğmesinin yazısı: kaç site gösteriliyor */
     private fun updateSiteToggles() {
-        siteToggles.removeAllViews()
-        for (s in sites) {
-            val n = offers.count { it.site == s.name }
-            if (n == 0) continue
-            val hidden = s.name in hiddenSites
-            val p = pill("${s.name} $n", if (hidden) muted else Color.WHITE,
-                if (hidden) greyBg else (siteColors[s.name] ?: ink), bold = true, size = 12f).apply {
-                setPadding(dp(10), dp(5), dp(10), dp(5))
-                if (hidden) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-                setOnClickListener {
-                    if (hidden) hiddenSites.remove(s.name) else hiddenSites.add(s.name)
-                    render(final = finished)
-                }
+        val withOffers = sites.filter { s -> offers.any { it.site == s.name } }
+        val shownN = withOffers.count { it.name !in hiddenSites }
+        sitesBtn.text = if (shownN == withOffers.size) "Siteler ▾" else "Siteler $shownN/${withOffers.size} ▾"
+        sitesBtn.setTextColor(if (shownN == withOffers.size) ink else gold)
+    }
+
+    /** Gösterilecek siteleri seç: işaretli olanlar listede kalır */
+    private fun chooseSites() {
+        val withOffers = sites.filter { s -> offers.any { it.site == s.name } }
+        if (withOffers.isEmpty()) return
+        val names = withOffers.map { s -> "${s.name} (${offers.count { it.site == s.name }} ilan)" }.toTypedArray<CharSequence>()
+        val checked = withOffers.map { it.name !in hiddenSites }.toBooleanArray()
+        AlertDialog.Builder(this)
+            .setTitle("Gösterilecek siteler")
+            .setMultiChoiceItems(names, checked) { _, which, on -> checked[which] = on }
+            .setPositiveButton("Uygula") { _, _ ->
+                hiddenSites.clear()
+                withOffers.forEachIndexed { i, s -> if (!checked[i]) hiddenSites.add(s.name) }
+                render(final = finished)
             }
-            siteToggles.addView(p, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(6) })
-        }
+            .setNeutralButton("Hepsi") { _, _ -> hiddenSites.clear(); render(final = finished) }
+            .setNegativeButton("Vazgeç", null)
+            .show()
     }
 
     /** En üstte büyük kutu: en ucuz aynı ürün */
@@ -3208,7 +3218,7 @@ class MainActivity : Activity() {
         head.addView(label("Ayarlar", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(label("Kapat", 14f, gold, true).apply {
             setPadding(dp(10), dp(6), dp(4), dp(6))
-            setOnClickListener { if (offers.isNotEmpty()) { filterBar.visibility = View.VISIBLE; status.visibility = View.VISIBLE; chipsScroll.visibility = View.VISIBLE; render(final = finished) } else showHome() }
+            setOnClickListener { if (offers.isNotEmpty()) { filterBar.visibility = View.VISIBLE; status.visibility = View.VISIBLE; chipsScroll.visibility = if (running) View.VISIBLE else View.GONE; render(final = finished) } else showHome() }
         })
         results.addView(head)
 
@@ -3756,7 +3766,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 51\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 52\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

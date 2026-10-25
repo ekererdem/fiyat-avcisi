@@ -119,10 +119,10 @@ class MainActivity : Activity() {
         Site("N11", "urun[.]n11[.]com|n11[.]com/urun/") { "https://www.n11.com/arama?q=$it" },
         Site("Pazarama", "pazarama[.]com/[^/?#]+-p-[A-Za-z0-9]+") { "https://www.pazarama.com/arama?q=$it" },
         // Market zincirleri
-        Site("Migros", "migros[.]com[.]tr/[^/?#]+-p-[0-9a-f]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.migros.com.tr/arama?q=$it" },
-        Site("CarrefourSA", "carrefoursa[.]com/[^/?#]+-p-[0-9]{5,}", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.carrefoursa.com/search/?text=$it" },
-        Site("A101", "a101[.]com[.]tr/.+_p-[0-9]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.a101.com.tr/arama?k=$it" },
-        Site("Şok", "sokmarket[.]com[.]tr/[^/?#]+-p-[0-9]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.sokmarket.com.tr/arama?q=$it" },
+        Site("Migros", "migros[.]com[.]tr/[^/?#]+-p-[0-9a-f]+", setOf("Market", "Bebek", "Kozmetik")) { "https://www.migros.com.tr/arama?q=$it" },
+        Site("CarrefourSA", "carrefoursa[.]com/[^/?#]+-p-[0-9]{5,}", setOf("Market", "Bebek", "Kozmetik")) { "https://www.carrefoursa.com/search/?text=$it" },
+        Site("A101", "a101[.]com[.]tr/.+_p-[0-9]+", setOf("Market", "Bebek", "Kozmetik")) { "https://www.a101.com.tr/arama?k=$it" },
+        Site("Şok", "sokmarket[.]com[.]tr/[^/?#]+-p-[0-9]+", setOf("Market", "Bebek", "Kozmetik")) { "https://www.sokmarket.com.tr/arama?q=$it" },
         // Elektronik
         Site("Vatan", "vatanbilgisayar[.]com/[a-z0-9-]+[.]html", setOf("Elektronik")) { "https://www.vatanbilgisayar.com/arama/$it/" },
         // Giyim, ayakkabı, spor
@@ -226,7 +226,7 @@ class MainActivity : Activity() {
             has("ayakkabı|sneaker|tişört|t-shirt|gömlek|pantolon|elbise|ceket|mont|eşofman|çanta|terlik|bot\\b|sweatshirt|beden") -> "Giyim"
             has("telefon|iphone|galaxy|televizyon|\\btv\\b|qled|oled|laptop|bilgisayar|tablet|ipad|kulaklık|airpods|monitör|kamera|" +
                 "playstation|ps5|xbox|akıllı saat|şarj|tıraş makinesi|süpürge|buzdolabı|çamaşır makinesi|bulaşık makinesi|klima|fırın|" +
-                "kahve makinesi|oneblade|ekran kartı|ssd|router|modem|yazıcı") -> "Elektronik"
+                "kahve makinesi|oneblade|ekran kartı|ssd|router|modem|yazıcı|akü|powerbank|\\d\\s*mah\\b|jump starter|kompresör|hoparlör|projeksiyon|drone|robot süpürge") -> "Elektronik"
             has("\\d+\\s*(gr|g|kg|ml|lt|l)\\b|kahve|çay|deterjan|yumuşatıcı|makarna|yağ|şeker|un\\b|süt|peynir|çikolata|bisküvi|kağıt havlu|tuvalet kağıdı|su\\b") -> "Market"
             else -> "Diğer"
         }
@@ -1478,7 +1478,7 @@ class MainActivity : Activity() {
     private fun runSites(all: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
         // Ayarlardan kapatılan siteler ve aramanın kategorisiyle ilgisi olmayan siteler taranmaz
         val cat = detectCategory()
-        val list = all.filter { siteOn(it.name) && (it.cats.isEmpty() || cat == "Diğer" || cat in it.cats) }
+        val list = all.filter { siteOn(it.name) && (it.cats.isEmpty() || cat in it.cats) }
         scanSites = list.map { it.name }.toSet()
         if (list.isEmpty()) {
             siteSummary.add("Hiçbir site açık değil (Ayarlar → Siteler)")
@@ -1590,6 +1590,8 @@ class MainActivity : Activity() {
         resolveType = inputType(cleanInput)
         resolveQuery = cleanInput
         familyTried = false
+        rescueTried = false
+        weakSites.clear()
         // Test sürümünde hafıza okunmaz: her arama sıfırdan (sarı satıra basmaya gerek yok)
         // "Seçimlerimi hatırla" kapalıysa her arama sıfırdan
         val mem = { k: String -> if (!flag("remember")) null else prefs.getString(k + norm(userInput), null) }
@@ -1661,13 +1663,19 @@ class MainActivity : Activity() {
         return relevant == 0 || (cards.length() >= 8 && relevant <= 1)
     }
 
+    /** Bu aramada ilgisiz ya da hiç sonuç döndüren siteler (ürün adıyla bir kez daha sorulur) */
+    private val weakSites = mutableSetOf<String>()
+    private var rescueTried = false
+
     private fun collect(name: String, d: JSONObject?, q: String, simpleUsed: Boolean, slot: Slot) {
         val cards = d?.optJSONArray("cards")
         val count = cards?.length() ?: 0
+        if (count == 0) weakSites.add(name)
         val isBarcode = q.replace(" ", "").let { s -> s.length in 8..14 && s.all { it.isDigit() } }
         if (count > 0 && !isBarcode && isIrrelevant(d, q)) {
             val sample = (0 until minOf(2, count)).joinToString(" | ") { cards!!.getJSONObject(it).optString("t").take(60) }
             siteSummary.add("$name: sonuçlar aramayla ilgisiz (site muhtemelen öneri gösteriyor) — ör: $sample")
+            weakSites.add(name)
             return
         }
         val seen = offers.map { offerKey(it) }.toHashSet()
@@ -2618,6 +2626,30 @@ class MainActivity : Activity() {
                 resolveLog.append("Model sitelerde bulunamadı; aynı seri aranıyor: ").append(fq).append("\n")
                 runSites(sites, fq, "Model bulunamadı, aynı seri aranıyor", onEach = { render(final = false) }) { startDetails() }
                 return
+            }
+        }
+        // Bazı siteler aramayı başka markaya düzeltiyor ("metontech" -> "vontech") ya da hiç sonuç vermiyor.
+        // Başka sitede aynı ürün bulunduysa, o sitelere bir kez de ürünün adıyla (markasız) sorulur.
+        if (!rescueTried && identity == null) {
+            rescueTried = true
+            val best = offers.filter { it.kind == Kind.MATCH }.maxByOrNull { countNum(it.ratingCount) }
+            val again = sites.filter { it.name in weakSites && it.name in scanSites }
+            if (best != null && again.isNotEmpty()) {
+                val brand = norm(query.split(" ").firstOrNull().orEmpty())
+                val words = best.title.substringBefore('|').substringBefore(',').substringBefore(" - ")
+                    .split(Regex("\\s+")).filter { it.isNotBlank() }
+                    .let { w -> if (w.isNotEmpty() && norm(w[0]) == brand) w.drop(1) else w }.take(7)
+                val rq = words.joinToString(" ")
+                if (words.size >= 3 && norm(rq) != norm(query)) {
+                    resolveLog.append("Sonuç vermeyen sitelere ürün adıyla soruluyor: ").append(rq)
+                        .append(" (").append(again.joinToString { it.name }).append(")\n")
+                    weakSites.clear()
+                    val prevScan = scanSites
+                    runSites(again, rq, "Ürün adıyla tekrar aranıyor", onEach = { prepareResults(); render(final = false) }) {
+                        scanSites = prevScan; startDetails()
+                    }
+                    return
+                }
             }
         }
         detailQueue.clear()

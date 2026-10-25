@@ -612,8 +612,22 @@ class MainActivity : Activity() {
     }
 
     /** Ayarlar simgesindeki kırmızı nokta: yeni sürüm varken görünür */
+    private var dotAnim: android.animation.ObjectAnimator? = null
     private fun updateGearDot() {
-        if (::gearDot.isInitialized) gearDot.visibility = if (Update.pending(this) != null) View.VISIBLE else View.GONE
+        if (!::gearDot.isInitialized) return
+        val on = Update.pending(this) != null
+        gearDot.visibility = if (on) View.VISIBLE else View.GONE
+        if (on && dotAnim == null) {
+            // Yanıp sönen nokta: göze çarpsın
+            dotAnim = android.animation.ObjectAnimator.ofFloat(gearDot, "alpha", 1f, 0.15f).apply {
+                duration = 650
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                start()
+            }
+        } else if (!on) {
+            dotAnim?.cancel(); dotAnim = null
+        }
     }
 
     /** Güncellemeyi indirip kurar; ilerlemeyi verilen yazıda gösterir */
@@ -3049,6 +3063,33 @@ class MainActivity : Activity() {
         })
         results.addView(head)
 
+        // Güncelleme
+        val up = settingsCard(if (Update.pending(this) != null) "Güncelleme · yeni sürüm var" else "Güncelleme")
+        val pend = Update.pending(this)
+        actionRow(up, "Sürüm ${Update.currentName(this)}", null,
+            if (pend != null) "Yeni sürüm var: $pend" else "Son denetim: " +
+                (if (Update.lastCheck(this) > 0) java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
+                    .format(java.util.Date(Update.lastCheck(this))) else "hiç"),
+            if (pend != null) "Güncelle" else "Denetle") {
+            if (pend != null) {
+                startUpdate(null)
+                Toast.makeText(this, "Güncelleme indiriliyor, bitince telefon onay isteyecek", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Denetleniyor…", Toast.LENGTH_SHORT).show()
+                Update.check(this) { name, code, err ->
+                    Toast.makeText(this, when {
+                        err != null -> "Denetlenemedi: $err"
+                        code > Update.current(this) -> "Yeni sürüm var: $name"
+                        else -> "Uygulama güncel"
+                    }, Toast.LENGTH_LONG).show()
+                    if (screen == "settings") showSettings()
+                }
+            }
+        }
+        switchRow(up, "Açılışta otomatik denetle", "Yeni sürüm varsa ana sayfada haber verir", flag("autoUpdate", true)) { v ->
+            settings.edit().putBoolean("autoUpdate", v).apply()
+        }
+
         // İzinler
         val perm = settingsCard("İzinler")
         val nm = getSystemService(android.app.NotificationManager::class.java)
@@ -3142,33 +3183,6 @@ class MainActivity : Activity() {
         choiceRow(al, "Kontrol sıklığı", "Sık kontrol biraz daha pil harcar",
             hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
         actionRow(al, "Alarmlarım", null, "${Alarms.load(this).size} ürün takipte", "Aç") { showAlarms() }
-
-        // Güncelleme
-        val up = settingsCard("Güncelleme")
-        val pend = Update.pending(this)
-        actionRow(up, "Sürüm ${Update.currentName(this)}", null,
-            if (pend != null) "Yeni sürüm var: $pend" else "Son denetim: " +
-                (if (Update.lastCheck(this) > 0) java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
-                    .format(java.util.Date(Update.lastCheck(this))) else "hiç"),
-            if (pend != null) "Güncelle" else "Denetle") {
-            if (pend != null) {
-                startUpdate(null)
-                Toast.makeText(this, "Güncelleme indiriliyor, bitince telefon onay isteyecek", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this, "Denetleniyor…", Toast.LENGTH_SHORT).show()
-                Update.check(this) { name, code, err ->
-                    Toast.makeText(this, when {
-                        err != null -> "Denetlenemedi: $err"
-                        code > Update.current(this) -> "Yeni sürüm var: $name"
-                        else -> "Uygulama güncel"
-                    }, Toast.LENGTH_LONG).show()
-                    if (screen == "settings") showSettings()
-                }
-            }
-        }
-        switchRow(up, "Açılışta otomatik denetle", "Yeni sürüm varsa ana sayfada haber verir", flag("autoUpdate", true)) { v ->
-            settings.edit().putBoolean("autoUpdate", v).apply()
-        }
 
         // Hafıza
         val mem = settingsCard("Hafıza")
@@ -3442,7 +3456,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 45\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 46\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

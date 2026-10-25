@@ -1519,18 +1519,24 @@ class MainActivity : Activity() {
             }
         }
         pool.forEach { launch(it) }
-        // Mağazada hız: 14 saniyede bitmeyen siteler beklenmez (en az 4 site bittiyse)
-        handler.postDelayed({
-            if (gen == phaseGen && !phaseDone && list.size - left >= 4) {
-                list.forEachIndexed { i, s ->
-                    if (!done[i]) {
-                        viewOf[i]?.let { v -> slots.getValue(v).gen++; v.stopLoading() }
-                        siteSummary.add("${s.name}: yavaş — beklenmedi (14 sn)")
+        // Mağazada hız: 14 saniyede bitmeyen siteler beklenmez (en az 4 site bittiyse).
+        // 4 site bitmediyse 2 sn'de bir yeniden bakılır; 25 saniyede ne olursa olsun bitirilir.
+        lateinit var cut: () -> Unit
+        cut = {
+            if (gen == phaseGen && !phaseDone) {
+                val el = android.os.SystemClock.elapsedRealtime() - t0
+                if (list.size - left >= 4 || el >= 25000) {
+                    list.forEachIndexed { i, s ->
+                        if (!done[i]) {
+                            viewOf[i]?.let { v -> slots.getValue(v).gen++; v.stopLoading() }
+                            siteSummary.add("${s.name}: yavaş — beklenmedi (${el / 1000} sn)")
+                        }
                     }
-                }
-                finish()
+                    finish()
+                } else handler.postDelayed({ cut() }, 2000)
             }
-        }, 14000)
+        }
+        handler.postDelayed({ cut() }, 14000)
     }
 
     private fun stopAll() {

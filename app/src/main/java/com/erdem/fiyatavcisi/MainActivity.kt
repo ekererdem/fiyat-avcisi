@@ -1417,7 +1417,7 @@ class MainActivity : Activity() {
         var stable = 0
         // Bazı siteler (Hepsiburada) sadece ekrandaki ürünleri tutar: her ölçümde görülen kartlar biriktirilir
         val acc = LinkedHashMap<String, JSONObject>()
-        val url = site.url(URLEncoder.encode(q, "UTF-8").replace("+", "%20"))
+        val url = site.url(URLEncoder.encode(siteQuery(q), "UTF-8").replace("+", "%20"))
         val isBarcodeSearch = q.replace(" ", "").all { it.isDigit() }
         loadAndPoll(v, url, extractJs(site.linkPattern, q), maxMs = 9000, scroll = true, ready = { d, n ->
             d?.optJSONArray("cards")?.let { arr ->
@@ -1950,6 +1950,10 @@ class MainActivity : Activity() {
 
     /** Başlığın karşılaştırma için sade hali (EDT yazım eşleri dahil) */
     private fun canonNorm(s: String) = norm(canonText(s))
+
+    /** Sitelere gönderilen metin: klavyenin düzelttiği "4 ın 1" gibi yazımlar düzeltilir (site "ın" ile "In"i eşlemiyor) */
+    private fun siteQuery(q: String): String =
+        q.replace(Regex("(?<![\\p{L}])[ıIİ][nN](?![\\p{L}])"), "in")
 
     /** Sade arama: miktar ve renk atılır ("prima 4 numara 80 adet" -> "prima 4 numara"); olmazsa ürün türü + ölçü */
     private fun simplifiedQuery(q: String): String {

@@ -3441,9 +3441,8 @@ class MainActivity : Activity() {
                 if (offers.isNotEmpty() && !running) render(final = finished)
             }
             .setNegativeButton("Hedefi değiştir") { _, _ ->
-                // Aynı grup yeniden kurulur (eski grup silinir)
-                Alarms.removeGroup(this@MainActivity, gid)
-                alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+                // Yeni hedef kurulunca eski grup silinir (vazgeçilirse eskisi kalır)
+                alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o, replaceGroup = gid)
             }
             .show()
     }
@@ -3474,7 +3473,7 @@ class MainActivity : Activity() {
     }
 
     private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?,
-                            offer: Offer? = null) {
+                            offer: Offer? = null, replaceGroup: Long = 0L) {
         val unit = offer?.let { offerUnit(it) }
         val group = offer?.let { groupCandidates(it) }.orEmpty()
         val box = LinearLayout(this).apply {
@@ -3543,6 +3542,7 @@ class MainActivity : Activity() {
             .setTitle(if (existing != null) "Alarm kurulu — güncelle" else "Fiyat alarmı kur")
             .setView(box)
             .setPositiveButton("Kur") { _, _ -> try {
+                if (replaceGroup != 0L) Alarms.removeGroup(this, replaceGroup)
                 val t = target.text.toString().replace(",", ".").toDoubleOrNull() ?: 0.0
                 val byUnit = unit != null && modeGroup.checkedRadioButtonId == mUnit.id
                 val wantGroup = group.size >= 2 && scopeGroup.checkedRadioButtonId == rAll.id

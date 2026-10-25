@@ -306,6 +306,7 @@ object Alarms {
         for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
             val best = groupBest(items) ?: continue
             val m = metric(best)!!
+            History.record(ctx, "g:$gid", m)
             val key = "gbest_$gid"
             val prev = prefs(ctx).getFloat(key, 0f).toDouble()
             val target = items.first().let { if (it.unitTarget > 0) it.unitTarget else it.target }

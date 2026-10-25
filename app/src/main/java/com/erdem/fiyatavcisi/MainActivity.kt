@@ -2552,6 +2552,9 @@ class MainActivity : Activity() {
         }
     }
 
+    /** "Ara ve güncelle" ile başlatılan aramanın ürün alarmı (arama bitince fiyatları güncellenir) */
+    private var alarmRefresh = 0L
+
     private fun finishSearch() {
         if (finished) return
         finished = true
@@ -2577,9 +2580,35 @@ class MainActivity : Activity() {
                         startPrice = c.price, lastPrice = c.price, lowest = c.price, lastCheck = 0L, status = "aramadan eklendi",
                         unitAmount = if (byUnit) cu?.first ?: 0.0 else 0.0, unitName = if (byUnit) cu?.second.orEmpty() else "")
                 }
-                if (added.isNotEmpty()) Alarms.save(this, Alarms.load(this) + added)
+                // Gruptaki ilanların fiyatlarını bu aramada görülen fiyatlarla güncelle
+                val seen = offers.associateBy { History.key(it.link) }
+                val now = System.currentTimeMillis()
+                var updated = 0
+                val cur = Alarms.load(this)
+                cur.filter { it.groupId == gid }.forEach { a ->
+                    val o = seen[History.key(a.link)] ?: return@forEach
+                    if (a.startPrice > 0 && o.price < a.startPrice * 0.4) return@forEach
+                    a.lastPrice = o.price
+                    if (a.lowest <= 0 || o.price < a.lowest) a.lowest = o.price
+                    a.inStock = true
+                    a.lastCheck = now
+                    a.status = "aramadan güncellendi"
+                    updated++
+                }
+                val merged = cur + added
+                Alarms.save(this, merged)
+                val grp = merged.filter { it.groupId == gid }
+                Alarms.groupBest(grp)?.let { b -> Alarms.metric(b)?.let { History.record(this, "g:$gid", it) } }
+                if (alarmRefresh == gid) {
+                    alarmRefresh = 0L
+                    val b = Alarms.groupBest(grp)
+                    Toast.makeText(this, "Alarm güncellendi: $updated ilan" +
+                        (if (added.isNotEmpty()) ", ${added.size} yeni" else "") +
+                        (b?.let { " · en uygun ${it.site}" } ?: ""), Toast.LENGTH_LONG).show()
+                }
             }
         } catch (e: Exception) {}
+        if (alarmRefresh != 0L) { alarmRefresh = 0L; Toast.makeText(this, "Bu aramada alarmdaki ürün bulunamadı", Toast.LENGTH_LONG).show() }
         // Fiyat geçmişi: bu ürünün bugünkü en ucuzu ve her eşleşen ilanın fiyatı
         try {
             val m = offers.filter { it.kind == Kind.MATCH }
@@ -3659,7 +3688,7 @@ class MainActivity : Activity() {
                 addView(label("Ürün alarmı · ${items.size} site", 12f, gold, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(label("Ara ve güncelle", 13f, gold, true).apply {
                     setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setOnClickListener { input.setText(best.groupQuery); startTest() }
+                    setOnClickListener { input.setText(best.groupQuery); alarmRefresh = best.groupId; startTest() }
                 })
                 addView(label("Sil", 13f, red, true).apply {
                     setPadding(dp(8), dp(2), dp(2), dp(2))
@@ -3682,6 +3711,14 @@ class MainActivity : Activity() {
                     addView(label((Alarms.metric(a)?.let { fmt(it) } ?: "?") + if (a.status.startsWith("fiyat okunamadı")) " · okunamadı" else "", 13f, muted))
                 })
             }
+            // Fiyat geçmişi: her gün gruptaki en uygun (adet başı) fiyat
+            val gh = History.get(this, "g:$gid")
+            if (gh.size >= 2) {
+                card.addView(Sparkline(this, gh, green, line), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(6) })
+                card.addView(label("Geçmiş ${gh.size} gün · en düşük ${fmt(gh.minOf { it.second })} · en yüksek ${fmt(gh.maxOf { it.second })}", 11f, muted))
+            } else card.addView(label("Fiyat geçmişi her kontrolde günlük tutuluyor; grafik 2. günden itibaren görünür", 11f, muted)
+                .apply { setPadding(0, dp(4), 0, 0) })
             if (items.any { it.lastCheck > 0 }) card.addView(label("Son kontrol ${df.format(java.util.Date(items.maxOf { it.lastCheck }))}", 11f, muted)
                 .apply { setPadding(0, dp(4), 0, 0) })
             results.addView(card, LinearLayout.LayoutParams(
@@ -3730,6 +3767,9 @@ class MainActivity : Activity() {
             if (a.wantStock) chips.addView(pill(when (a.inStock) { false -> "stok bekleniyor"; true -> "stokta"; else -> "stok takibi" },
                 if (a.inStock == false) orange else green, if (a.inStock == false) orangeBg else greenBg))
             col.addView(chips)
+            val oh = History.offer(this, a.link)
+            if (oh.size >= 2) col.addView(Sparkline(this, oh, green, line), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(6) })
             col.addView(label(
                 (if (a.lastCheck > 0) "Son kontrol ${df.format(java.util.Date(a.lastCheck))} · " else "") + a.status,
                 11f, muted

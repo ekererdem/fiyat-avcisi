@@ -594,6 +594,23 @@ class MainActivity : Activity() {
         } catch (e: Exception) {}
         showLastCrash()
         handleShare(intent)
+        // Yeni sürüm var mı: en çok 3 saatte bir, arka planda
+        if (flag("autoUpdate", true) && System.currentTimeMillis() - Update.lastCheck(this) > 3 * 3_600_000L) {
+            Update.check(this) { _, _, _ -> if (screen == "home" && !running) showHome() }
+        }
+    }
+
+    /** Güncellemeyi indirip kurar; ilerlemeyi verilen yazıda gösterir */
+    private fun startUpdate(info: TextView?) {
+        val started = Update.install(this) { pct ->
+            info?.text = when {
+                pct == -2 -> "İndirilemedi, tarayıcıdan indiriliyor"
+                pct == -1 -> "İndiriliyor…"
+                pct >= 100 -> "İndirildi, kurulum onayı açılıyor…"
+                else -> "İndiriliyor… %$pct"
+            }
+        }
+        if (started) info?.text = "İndirme başladı…"
     }
 
     private fun showLastCrash() {
@@ -948,6 +965,29 @@ class MainActivity : Activity() {
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(8) })
+
+        // Yeni sürüm bildirimi
+        Update.pending(this)?.let { newName ->
+            val info = label("Yeni sürüm: $newName · şu anki ${Update.currentName(this)}", 12f, ink)
+            results.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(amberBg, 18)
+                setPadding(dp(16), dp(12), dp(12), dp(12))
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label("Güncelleme var", 15f, ink, true))
+                    addView(info)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label("Güncelle", 14f, accentOn, true).apply {
+                    background = rounded(gold, 18)
+                    setPadding(dp(16), dp(9), dp(16), dp(9))
+                    setOnClickListener { startUpdate(info) }
+                })
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) })
+        }
 
         // Barkod okut
         results.addView(LinearLayout(this).apply {
@@ -3075,6 +3115,33 @@ class MainActivity : Activity() {
             hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
         actionRow(al, "Alarmlarım", null, "${Alarms.load(this).size} ürün takipte", "Aç") { showAlarms() }
 
+        // Güncelleme
+        val up = settingsCard("Güncelleme")
+        val pend = Update.pending(this)
+        actionRow(up, "Sürüm ${Update.currentName(this)}", null,
+            if (pend != null) "Yeni sürüm var: $pend" else "Son denetim: " +
+                (if (Update.lastCheck(this) > 0) java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
+                    .format(java.util.Date(Update.lastCheck(this))) else "hiç"),
+            if (pend != null) "Güncelle" else "Denetle") {
+            if (pend != null) {
+                startUpdate(null)
+                Toast.makeText(this, "Güncelleme indiriliyor, bitince telefon onay isteyecek", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Denetleniyor…", Toast.LENGTH_SHORT).show()
+                Update.check(this) { name, code, err ->
+                    Toast.makeText(this, when {
+                        err != null -> "Denetlenemedi: $err"
+                        code > Update.current(this) -> "Yeni sürüm var: $name"
+                        else -> "Uygulama güncel"
+                    }, Toast.LENGTH_LONG).show()
+                    if (screen == "settings") showSettings()
+                }
+            }
+        }
+        switchRow(up, "Açılışta otomatik denetle", "Yeni sürüm varsa ana sayfada haber verir", flag("autoUpdate", true)) { v ->
+            settings.edit().putBoolean("autoUpdate", v).apply()
+        }
+
         // Hafıza
         val mem = settingsCard("Hafıza")
         switchRow(mem, "Seçimlerimi hatırla", "\"Hangisini kastettin?\" sorusundaki seçimin bir dahaki aramada sorulmaz",
@@ -3085,7 +3152,7 @@ class MainActivity : Activity() {
             showSettings()
         }
 
-        results.addView(label("Fiyat Avcısı · test 0.43", 12f, muted).apply {
+        results.addView(label("Fiyat Avcısı · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3347,7 +3414,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 43\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 44\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

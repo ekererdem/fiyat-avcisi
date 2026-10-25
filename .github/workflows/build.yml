@@ -42,4 +42,23 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk FiyatAvcisi-test.apk
           gh release create "test-${{ github.run_number }}" FiyatAvcisi-test.apk \
             --title "Deneme ${{ github.run_number }}" \
-            --notes "Okuma testi APK'sı" --latest
+            --notes "Okuma testi APK'sı"
+
+      - name: Uygulama içi güncelleme için "latest" sürümünü yenile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          R=repos/${{ github.repository }}/releases
+          # Uygulama "güncelleme var mı" kontrolünde bu nottaki sürümü okur
+          VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          VC=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          NOTES="Sürüm $VN ($VC) · Son derleme: $GITHUB_SHA"
+          cp FiyatAvcisi-test.apk FiyatAvcisi.apk
+          for id in $(gh api $R --jq '.[] | select(.draft) | .id'); do gh api -X DELETE $R/$id || true; done
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin refs/tags/latest
+          if ! gh api $R/tags/latest >/dev/null 2>&1; then
+            gh release create latest --title "Fiyat Avcısı" --notes "$NOTES" --verify-tag
+          fi
+          gh release upload latest FiyatAvcisi.apk --clobber
+          gh release edit latest --draft=false --latest --title "Fiyat Avcısı" --notes "$NOTES"

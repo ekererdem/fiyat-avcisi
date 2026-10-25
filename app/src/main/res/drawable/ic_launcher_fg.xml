@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fiyat etiketi + büyüteç: koyu zemin üzerinde altın -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Etiket gövdesi, delikli -->
+    <path android:fillColor="#F2C14E" android:fillType="evenOdd"
+        android:pathData="M30,36 L58,36 L74,54 L58,72 L30,72 C27.8,72 26,70.2 26,68 L26,40 C26,37.8 27.8,36 30,36 Z M36,50 A4,4 0 1,0 36,58 A4,4 0 1,0 36,50 Z" />
+    <!-- Barkod çizgileri -->
+    <path android:fillColor="#111111"
+        android:pathData="M45,45h2.5v18h-2.5z M50,45h1.5v18h-1.5z M54,45h3v18h-3z M59.5,45h1.5v18h-1.5z" />
+    <!-- Büyüteç -->
+    <path android:fillColor="#00000000" android:strokeColor="#F2C14E" android:strokeWidth="5"
+        android:pathData="M74,58 A9,9 0 1,1 74,76 A9,9 0 1,1 74,58 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#F2C14E" android:strokeWidth="5" android:strokeLineCap="round"
+        android:pathData="M80.5,73.5 L86,79" />
+</vector>

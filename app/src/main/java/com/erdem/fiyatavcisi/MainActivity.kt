@@ -89,6 +89,10 @@ class MainActivity : Activity() {
         var note: String = "",           // "★ birim fiyatı en uygun", "⚠ birim fiyatı 5 kat"
         var brandHint: String = "",      // kartta addan önce yazan kısa metin (Amazon'da marka)
         var image: String = "",          // ürün fotoğrafı adresi
+        var memberPrice: Double = 0.0,   // Plus / Premium / Prime üyelere özel fiyat
+        var memberName: String = "",
+        var shipFee: Double = -1.0,      // 0 = kargo bedava, -1 = bilinmiyor
+        var freeOver: Double = 0.0,      // bu tutarın üzeri kargo bedava
     )
 
     private enum class Kind { MATCH, MUADIL, POSSIBLE, SUSPICIOUS, OTHER_PACKAGE, USED, ACCESSORY, DIFFERENT_MODEL, OTHER }
@@ -126,13 +130,48 @@ class MainActivity : Activity() {
         "lego", "oyuncak", "maket", "puzzle", "figür",
     )
 
-    private val gold = Color.parseColor("#C8961E")
-    private val ink = Color.parseColor("#1D1B16")
-    private val paper = Color.parseColor("#FAF7F0")
-    private val muted = Color.parseColor("#6B6458")
-    private val green = Color.parseColor("#2E7D32")
-    private val red = Color.parseColor("#B3261E")
-    private val orange = Color.parseColor("#E07B00")
+    // Tema renkleri (açık / koyu), applyTheme() ayarlar. "gold" vurgu rengidir (C temasında yeşil).
+    private var dark = false
+    private var gold = 0
+    private var accentOn = 0
+    private var brand = 0
+    private var ink = 0
+    private var paper = 0
+    private var surface = 0
+    private var muted = 0
+    private var hint = 0
+    private var green = 0
+    private var red = 0
+    private var orange = 0
+    private var line = 0
+    private var greenBg = 0
+    private var redBg = 0
+    private var orangeBg = 0
+    private var greyBg = 0
+    private var amberBg = 0
+
+    private fun c(hex: String) = Color.parseColor(hex)
+
+    private fun applyTheme() {
+        val mode = getSharedPreferences("ayarlar", Context.MODE_PRIVATE).getInt("theme", 0)
+        dark = when (mode) {
+            1 -> false
+            2 -> true
+            else -> (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+        }
+        if (dark) {
+            paper = c("#0F0F0F"); surface = c("#1A1A1A"); greyBg = c("#242424"); ink = c("#F2F2F2"); muted = c("#A3A3A3")
+            hint = c("#6E6E6E"); line = c("#2A2A2A"); gold = c("#4CC38A"); accentOn = c("#0F0F0F"); brand = c("#F2C14E")
+            green = c("#4CC38A"); red = c("#F28B82"); orange = c("#F5A962")
+            greenBg = c("#13301F"); redBg = c("#3B1A18"); orangeBg = c("#3A2814"); amberBg = c("#3A3016")
+        } else {
+            paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
+            hint = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0F6B3A"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
+            green = c("#0F6B3A"); red = c("#B42318"); orange = c("#B54708")
+            greenBg = c("#EAF5EE"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#FFF6DB")
+        }
+    }
 
     private val tl = NumberFormat.getNumberInstance(Locale("tr", "TR")).apply {
         maximumFractionDigits = 2
@@ -158,6 +197,38 @@ class MainActivity : Activity() {
     private fun flag(k: String, def: Boolean = false) = settings.getBoolean(k, def)
     private fun siteOn(name: String) = settings.getBoolean("site_$name", true)
     private var screen = "home"           // home / results / alarms / settings
+    private val categories = listOf("Elektronik", "Market", "Kozmetik", "Giyim", "Bebek", "Diğer")
+    private var currentCategory = "Diğer"
+    private var editCat = "Genel"
+
+    /** Aramanın kategorisi: aranan yazı ve eşleşen ilan adlarındaki kelimelerden */
+    private fun detectCategory(): String {
+        val t = (query + " " + offers.filter { it.kind == Kind.MATCH }.take(12).joinToString(" ") { it.title })
+            .lowercase(Locale("tr", "TR"))
+        fun has(re: String) = Regex(re).containsMatchIn(t)
+        return when {
+            has("bebek bezi|bebek bez|külot bez|prima|molfix|sleepy|biberon|emzik|bebek maması|ıslak havlu|ıslak mendil") -> "Bebek"
+            has("parfüm|parfum|\\bedt\\b|\\bedp\\b|deodorant|şampuan|krem|ruj|maskara|serum|losyon|tıraş köpüğü|saç boyası|cilt") -> "Kozmetik"
+            has("ayakkabı|sneaker|tişört|t-shirt|gömlek|pantolon|elbise|ceket|mont|eşofman|çanta|terlik|bot\\b|sweatshirt|beden") -> "Giyim"
+            has("telefon|iphone|galaxy|televizyon|\\btv\\b|qled|oled|laptop|bilgisayar|tablet|ipad|kulaklık|airpods|monitör|kamera|" +
+                "playstation|ps5|xbox|akıllı saat|şarj|tıraş makinesi|süpürge|buzdolabı|çamaşır makinesi|bulaşık makinesi|klima|fırın|" +
+                "kahve makinesi|oneblade|ekran kartı|ssd|router|modem|yazıcı") -> "Elektronik"
+            has("\\d+\\s*(gr|g|kg|ml|lt|l)\\b|kahve|çay|deterjan|yumuşatıcı|makarna|yağ|şeker|un\\b|süt|peynir|çikolata|bisküvi|kağıt havlu|tuvalet kağıdı|su\\b") -> "Market"
+            else -> "Diğer"
+        }
+    }
+
+    private fun ruleOn(k: String): Boolean = when (settings.getInt("cat_${currentCategory}_$k", 0)) {
+        1 -> true
+        2 -> false
+        else -> flag(k)
+    }
+
+    private fun ruleMinRating(): Float =
+        settings.getFloat("cat_${currentCategory}_minRating", -1f).let { if (it >= 0) it else settings.getFloat("minRating", 0f) }
+
+    private fun ruleMinReviews(): Int =
+        settings.getInt("cat_${currentCategory}_minReviews", -1).let { if (it >= 0) it else settings.getInt("minReviews", 0) }
     private var familyTried = false      // model bulunamayınca aynı serinin diğer yılları arandı mı   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
@@ -283,7 +354,7 @@ class MainActivity : Activity() {
     private var filterText = ""
     private var sortMode = 0
     private val hiddenSites = HashSet<String>()
-    private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Birim fiyat", "Puan", "Değerlendirme sayısı")
+    private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Birim fiyat", "Puan", "Değerlendirme sayısı", "Kargo dahil en ucuz")
     private val refilter = Runnable { if (offers.isNotEmpty()) render(final = finished) }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -409,7 +480,23 @@ class MainActivity : Activity() {
               el = p;
             }
             var text = el.innerText || '';
-            var ps = (clean(text).match(priceRe) || []).map(num).filter(function(x){ return x > 0; });
+            // Üyelik fiyatı (Trendyol Plus, Hepsiburada Premium, Amazon Prime): herkesin ödediği fiyat değildir, ayrı tutulur
+            var member = 0, memberName = '';
+            var mm = /(trendyol\s*plus|premium|prime)\s*(?:ile|'?le|'?la|fiyatı)[^\d\n]{0,12}([\d.,]+)\s*(?:TL|₺)(?:\s*%\s*\d+\s*([\d.,]+)\s*(?:TL|₺))?/i.exec(text);
+            var priceText = text;
+            if (mm) {
+              memberName = /premium/i.test(mm[1]) ? 'Premium' : (/prime/i.test(mm[1]) ? 'Prime' : 'Plus');
+              member = num(mm[3] || mm[2]);
+              // "Premium ile 1.899 TL %5 1.804 TL": 1.899 normal fiyat kalır, 1.804 çıkarılır
+              priceText = text.replace(mm[0], mm[3] ? ' ' + mm[2] + ' TL ' : ' ');
+            }
+            // Kargo: bedava / ücreti / şu tutarın üzeri bedava
+            var ship = -1, freeOver = 0;
+            if (/kargo bedava|ücretsiz kargo|kargo ücretsiz|bedava kargo|ücretsiz teslimat|kargo dahil/i.test(text)) ship = 0;
+            var fo = /([\d.,]+)\s*(?:TL|₺)\s*(?:ve\s+)?(?:üzeri|üstü)[^\n]{0,40}?(?:kargo|teslimat)/i.exec(text);
+            if (fo) { freeOver = num(fo[1]); if (ship === 0 && /üzeri|üstü/i.test(fo[0])) ship = -1; }
+            if (ship < 0) { var sf = /kargo(?:\s*ücreti)?\s*:?\s*(?:₺\s?)?([\d]{1,3}(?:[.,]\d{1,2})?)\s*(?:TL|₺)/i.exec(text); if (sf) ship = num(sf[1]); }
+            var ps = (clean(priceText).match(priceRe) || []).map(num).filter(function(x){ return x > 0; });
             if (!ps.length) continue;
             seen[key] = 1;
             var max = Math.max.apply(null, ps);
@@ -452,6 +539,7 @@ class MainActivity : Activity() {
             cards.push({ t: title, p: price, lp: max, sepet: /sepette/i.test(text),
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
               badge: ((/yetkili satıcı|resmi satıcı|resmi mağaza|marka mağazası/i.exec(text) || [''])[0]),
+              mp: member, mpn: memberName, ship: ship, fover: freeOver,
               img: imgOf(el), alts: ok, raw: text.replace(/\s+/g, ' ').slice(0, 260) });
           }
           // Farklı ürünlerin çoğunda aynı fiyat varsa ("300 TL üzeri ücretsiz kargo" gibi bir afiş): o sayı fiyat değildir
@@ -481,6 +569,9 @@ class MainActivity : Activity() {
         .replace("__Q__", q.lowercase(Locale("tr", "TR")).replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim())
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyTheme()
+        // Pencereler (diyalog, menü) de temaya uysun
+        setTheme(if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(savedInstanceState)
         // Uygulama çökerse hatanın ayrıntısını sakla; bir sonraki açılışta göster (teşhis için)
         val prev = Thread.getDefaultUncaughtExceptionHandler()
@@ -491,7 +582,11 @@ class MainActivity : Activity() {
             } catch (x: Exception) {}
             prev?.uncaughtException(t, e)
         }
-        window.statusBarColor = ink
+        window.statusBarColor = paper
+        window.navigationBarColor = paper
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = if (dark) 0 else
+            (View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
         setContentView(buildUi())
         try {
             Alarms.ensureChannel(this)
@@ -543,12 +638,6 @@ class MainActivity : Activity() {
 
     // ---------- Görsel yardımcılar ----------
 
-    private val line = Color.parseColor("#E7E2D8")
-    private val greenBg = Color.parseColor("#E3F4E6")
-    private val redBg = Color.parseColor("#FCE4E2")
-    private val orangeBg = Color.parseColor("#FDEBD8")
-    private val greyBg = Color.parseColor("#EFECE6")
-    private val amberBg = Color.parseColor("#FFF3D6")
 
     private val siteColors = mapOf(
         "Trendyol" to Color.parseColor("#F27A1A"), "Hepsiburada" to Color.parseColor("#FF6000"),
@@ -569,6 +658,18 @@ class MainActivity : Activity() {
         if (bold) typeface = Typeface.DEFAULT_BOLD
         background = rounded(bg, 20)
         setPadding(dp(8), dp(3), dp(8), dp(3))
+    }
+
+    /** Yuvarlak ikon düğmesi (44 dp dokunma alanı) */
+    private fun iconButton(res: Int, desc: String, onClick: () -> Unit) = ImageView(this).apply {
+        setImageResource(res)
+        imageTintList = android.content.res.ColorStateList.valueOf(ink)
+        contentDescription = desc
+        setPadding(dp(11), dp(11), dp(11), dp(11))
+        layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+        background = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(greyBg), null, rounded(Color.WHITE, 22))
+        setOnClickListener { onClick() }
     }
 
     /** Çipleri satıra sığdıkça dizen, sığmayanı alt satıra geçiren kutu */
@@ -637,58 +738,62 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        // Başlık
+        // Başlık: logo, ad, alarm ve ayar düğmeleri
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(ink)
-            setPadding(dp(18), dp(14), dp(8), dp(14))
+            setPadding(dp(16), dp(14), dp(10), dp(10))
         }
-        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.41", 11f, Color.parseColor("#A8A29E")))
-        header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
-            setPadding(dp(14), dp(2), dp(14), dp(2))
-        }
+        header.addView(label("FA", 15f, brand, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(if (dark) c("#2A2A2A") else c("#111111"), 10)
+        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) })
+        header.addView(label("Fiyat Avcısı", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(iconButton(R.drawable.ic_bell, "Alarmlar") { showAlarms() })
+        header.addView(iconButton(R.drawable.ic_gear, "Ayarlar") { showSettings() })
+        val menuBtn = iconButton(R.drawable.ic_more, "Menü") {}
         menuBtn.setOnClickListener { showMenu(menuBtn) }
-        header.addView(label("⚙", 22f, Color.WHITE).apply {
-            setPadding(dp(12), dp(2), dp(8), dp(2))
-            setOnClickListener { showSettings() }
-        })
         header.addView(menuBtn)
         root.addView(header)
 
-        // Arama kutusu
+        // Arama kutusu: hap biçimi, içinde barkod ve Ara düğmeleri
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(6))
+            background = rounded(greyBg, 28)
+            setPadding(dp(16), dp(4), dp(5), dp(4))
         }
+        searchRow.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_search)
+            imageTintList = android.content.res.ColorStateList.valueOf(muted)
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
         input = EditText(this).apply {
             hint = "Ürün adı, model kodu ya da barkod"
             setSingleLine()
             textSize = 16f
             setTextColor(ink)
-            setHintTextColor(Color.parseColor("#A8A29E"))
-            background = rounded(Color.WHITE, 14, line)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setHintTextColor(hint)
+            background = null
+            setPadding(0, dp(10), 0, dp(10))
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             setOnEditorActionListener { _, id, _ ->
                 if (id == EditorInfo.IME_ACTION_SEARCH) { startTest(); true } else false
             }
         }
         searchRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val go = label("Ara", 16f, ink, true).apply {
+        searchRow.addView(iconButton(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() })
+        val go = label("Ara", 15f, accentOn, true).apply {
             gravity = Gravity.CENTER
-            background = rounded(gold, 14)
-            setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = rounded(gold, 22)
+            setPadding(dp(18), dp(11), dp(18), dp(11))
             setOnClickListener { startTest() }
         }
         searchRow.addView(go, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = dp(8) })
-        root.addView(searchRow)
+        ).apply { marginStart = dp(2) })
+        root.addView(searchRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(14), dp(2), dp(14), dp(8)) })
 
         // Site durumu çipleri ve ilerleme çubuğu
         siteChips = LinearLayout(this).apply {
@@ -731,8 +836,8 @@ class MainActivity : Activity() {
             setSingleLine()
             textSize = 14f
             setTextColor(ink)
-            setHintTextColor(Color.parseColor("#A8A29E"))
-            background = rounded(Color.WHITE, 12, line)
+            setHintTextColor(hint)
+            background = rounded(surface, 12, line)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -746,7 +851,7 @@ class MainActivity : Activity() {
         }
         fRow.addView(filterInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         sortBtn = label("Sırala ▾", 14f, ink, true).apply {
-            background = rounded(Color.WHITE, 12, line)
+            background = rounded(surface, 12, line)
             setPadding(dp(12), dp(9), dp(12), dp(9))
         }
         sortBtn.setOnClickListener {
@@ -831,7 +936,7 @@ class MainActivity : Activity() {
         results.removeAllViews()
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 16, line)
+            background = rounded(surface, 16, line)
             setPadding(dp(18), dp(18), dp(18), dp(18))
         }
         card.addView(label("Ne arıyorsun?", 20f, ink, true))
@@ -843,6 +948,27 @@ class MainActivity : Activity() {
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(8) })
+
+        // Barkod okut
+        results.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(gold, 18)
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_barcode)
+                imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
+            }, LinearLayout.LayoutParams(dp(26), dp(26)))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), 0, 0, 0)
+                addView(label("Barkod okut", 16f, accentOn, true))
+                addView(label("Raftaki ürünün barkodunu ya da QR kodunu tara", 12f, accentOn).apply { alpha = 0.85f })
+            })
+            setOnClickListener { scanBarcode() }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
 
         // Alarmlar kartı
         val alarmCount = Alarms.load(this).size
@@ -868,8 +994,8 @@ class MainActivity : Activity() {
         val flow = FlowLayout(this, dp(8))
         (recent.ifEmpty { listOf("iphone 16 128gb", "nescafe gold 200 gr", "dior sauvage edt 100 ml", "prima 4 numara") })
             .forEach { q ->
-                flow.addView(pill(q, ink, Color.WHITE, size = 14f).apply {
-                    background = rounded(Color.WHITE, 20, line)
+                flow.addView(pill(q, ink, surface, size = 14f).apply {
+                    background = rounded(surface, 20, line)
                     setPadding(dp(14), dp(8), dp(14), dp(8))
                     // Dokununca sadece arama kutusuna yazar: düzenleyip Ara'ya basılır
                     setOnClickListener {
@@ -1285,6 +1411,10 @@ class MainActivity : Activity() {
                 raw = c.optString("raw"),
                 badge = c.optString("badge"),
                 image = c.optString("img"),
+                memberPrice = c.optDouble("mp", 0.0).takeIf { !it.isNaN() } ?: 0.0,
+                memberName = c.optString("mpn"),
+                shipFee = c.optDouble("ship", -1.0).takeIf { !it.isNaN() } ?: -1.0,
+                freeOver = c.optDouble("fover", 0.0).takeIf { !it.isNaN() } ?: 0.0,
             )
             // Amazon markayı ad satırının üstünde ayrı yazar: kart metninde addan önceki kısa yazı marka olabilir
             val idx = o.raw.indexOf(o.title.take(20))
@@ -2275,6 +2405,12 @@ class MainActivity : Activity() {
         stopAll()
         progress.visibility = View.GONE
         render(final = true)
+        // Fiyat geçmişi: bu ürünün bugünkü en ucuzu ve her eşleşen ilanın fiyatı
+        try {
+            val m = offers.filter { it.kind == Kind.MATCH }
+            m.minOfOrNull { it.price }?.let { History.recordProduct(this, productKey(), it) }
+            m.forEach { History.recordOffer(this, it.link, it.price) }
+        } catch (e: Exception) {}
         // Barkoddan bulunan adı hatırla: aynı barkod bir daha tanıma adımına girmez
         if (identity == null && norm(resolveQuery) != norm(userInput)) {
             val exact = offers.filter { it.exact }.map { offerKey(it) }
@@ -2322,10 +2458,16 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(6), dp(4), dp(6))
         }
+        currentCategory = detectCategory()
         bar.addView(label(if (id != null) "Ürün: ${id.label}" else "Aranan: $query", 13f, muted).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // Kategori: dokununca o kategorinin kurallarını açar
+        bar.addView(pill(currentCategory, ink, greyBg).apply {
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            setOnClickListener { if (!running) { editCat = currentCategory; showSettings() } }
+        })
         if (!running) bar.addView(label("Yeniden tanı", 13f, gold, true).apply {
             setPadding(dp(10), dp(4), 0, dp(4))
             setOnClickListener { forgetIdentity() }
@@ -2426,13 +2568,13 @@ class MainActivity : Activity() {
     private fun shown(o: Offer): Boolean {
         if (o.site in hiddenSites) return false
         // Ayarlardaki kurallar
-        if (flag("hideAbroad") && o.origin.isNotEmpty() && !o.origin.startsWith("Türkiye")) return false
-        if (flag("hideUsed") && o.kind == Kind.USED) return false
-        if (flag("hideSuspicious") && o.kind == Kind.SUSPICIOUS) return false
-        if (flag("hideImporter") && (o.warranty + " " + o.warrantyType).lowercase(Locale("tr", "TR")).contains("ithalatçı")) return false
-        val minR = settings.getFloat("minRating", 0f)
+        if (ruleOn("hideAbroad") && o.origin.isNotEmpty() && !o.origin.startsWith("Türkiye")) return false
+        if (ruleOn("hideUsed") && o.kind == Kind.USED) return false
+        if (ruleOn("hideSuspicious") && o.kind == Kind.SUSPICIOUS) return false
+        if (ruleOn("hideImporter") && (o.warranty + " " + o.warrantyType).lowercase(Locale("tr", "TR")).contains("ithalatçı")) return false
+        val minR = ruleMinRating()
         if (minR > 0 && ratingNum(o) > 0 && ratingNum(o) < minR) return false
-        val minC = settings.getInt("minReviews", 0)
+        val minC = ruleMinReviews()
         if (minC > 0 && countNum(o.ratingCount) < minC) return false
         val words = filterText.trim().split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return true
@@ -2449,6 +2591,8 @@ class MainActivity : Activity() {
         3 -> list.sortedWith(compareBy<Offer> { unitPrice(it)?.first ?: Double.MAX_VALUE }.thenBy { it.price })
         4 -> list.sortedWith(compareByDescending<Offer> { ratingNum(it) }.thenByDescending { countNum(it.ratingCount) })
         5 -> list.sortedWith(compareByDescending<Offer> { countNum(it.ratingCount) }.thenByDescending { ratingNum(it) })
+        // Kargosu bilinmeyen ilan kendi fiyatıyla sıralanır
+        6 -> list.sortedBy { totalPrice(it) ?: it.price }
         else -> list
     }
 
@@ -2478,41 +2622,71 @@ class MainActivity : Activity() {
     private fun heroCard(matches: List<Offer>) {
         val o = matches.first()
         val card = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = rounded(Color.WHITE, 18, gold, 2)
-            elevation = dp(2).toFloat()
-            setPadding(dp(14), dp(14), dp(14), dp(14))
+            orientation = LinearLayout.VERTICAL
+            background = rounded(greenBg, 24)
+            setPadding(dp(16), dp(16), dp(16), dp(14))
             setOnClickListener { openLink(o) }
         }
-        card.addView(photo(o, 92), LinearLayout.LayoutParams(dp(92), dp(92)).apply { marginEnd = dp(14) })
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        top.addView(photo(o, 92), LinearLayout.LayoutParams(dp(92), dp(92)).apply { marginEnd = dp(14) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(label("EN UCUZ", 11f, gold, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(label("En ucuz · ${o.site}", 12f, green, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(bell(o))
         })
-        col.addView(label(money(o.price), 28f, ink, true))
-        col.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(sitePill(o))
-            if (o.seller.isNotEmpty()) addView(label("  ${o.seller}", 12f, muted).apply {
-                maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-            })
-        })
-        col.addView(label(o.title, 13f, ink).apply {
-            maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, 0)
-        })
-        val top = matches.last().price
-        if (matches.size > 1) col.addView(label(
-            "${matches.size} teklif · en pahalısı ${money(top)}" + if (top > o.price) " (+${money(top - o.price)})" else "",
+        col.addView(label(money(o.price), 30f, green, true))
+        col.addView(label(o.title, 13f, ink).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+        val extra = mutableListOf<String>()
+        if (o.seller.isNotEmpty()) extra.add("Satıcı ${o.seller}")
+        shipText(o)?.let { extra.add(it) }
+        if (extra.isNotEmpty()) col.addView(label(extra.joinToString(" · "), 12f, muted).apply { setPadding(0, dp(3), 0, 0) })
+        top.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(top)
+
+        // Fiyat geçmişi: bu ürün için günlerin en ucuzu
+        val hist = History.product(this, productKey())
+        if (hist.size >= 2) {
+            val lo = hist.minOf { it.second }
+            val hi = hist.maxOf { it.second }
+            val days = (History.today() - hist.first().first + 1).toInt()
+            card.addView(Sparkline(this, hist, green, line), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(10) })
+            val verdict = when {
+                o.price <= lo -> "Son $days günün en düşük fiyatı"
+                o.price <= lo * 1.03 -> "En düşüğe çok yakın (en düşük ${money(lo)})"
+                else -> "Daha önce ${money(lo)} görüldü"
+            }
+            card.addView(label("$verdict · aralık ${money(lo)} – ${money(hi)}", 12f, ink, true).apply { setPadding(0, dp(4), 0, 0) })
+        } else {
+            card.addView(label("Fiyat geçmişi bu aramadan itibaren tutuluyor", 11f, muted).apply { setPadding(0, dp(8), 0, 0) })
+        }
+        val top2 = matches.last().price
+        if (matches.size > 1) card.addView(label(
+            "${matches.size} teklif · en pahalısı ${money(top2)}" + if (top2 > o.price) " (+${money(top2 - o.price)})" else "",
             12f, muted
         ).apply { setPadding(0, dp(4), 0, 0) })
-        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(2), dp(4), dp(2), dp(6)) })
+    }
+
+    /** Ürünün geçmiş anahtarı: seçilen kimlik ya da aramanın sade hali */
+    private fun productKey() = norm(identity?.label ?: query)
+
+    /** Kargo dahil fiyat; kargo bilinmiyorsa null */
+    private fun totalPrice(o: Offer): Double? = when {
+        o.shipFee == 0.0 -> o.price
+        o.freeOver > 0 && o.price >= o.freeOver -> o.price
+        o.shipFee > 0 -> o.price + o.shipFee
+        else -> null
+    }
+
+    private fun shipText(o: Offer): String? = when {
+        o.shipFee == 0.0 || (o.freeOver > 0 && o.price >= o.freeOver) -> "Kargo bedava"
+        o.shipFee > 0 -> "+${money(o.shipFee)} kargo"
+        else -> null
     }
 
     private fun noticeCard(text: String, fg: Int, bg: Int) {
@@ -2550,7 +2724,7 @@ class MainActivity : Activity() {
     private fun sitePill(o: Offer) = pill(o.site, Color.WHITE, siteColors[o.site] ?: ink, bold = true)
 
     private fun photo(o: Offer, size: Int) = ImageView(this).apply {
-        background = rounded(Color.WHITE, 12, line)
+        background = rounded(if (dark) greyBg else surface, 14, line)
         setPadding(dp(4), dp(4), dp(4), dp(4))
         scaleType = ImageView.ScaleType.FIT_CENTER
         if (o.image.isNotEmpty()) loadImage(o.image, this,
@@ -2618,43 +2792,25 @@ class MainActivity : Activity() {
         }
 
     private fun offerRow(o: Offer, best: Boolean) {
-        val card = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = rounded(Color.WHITE, 14, if (best) gold else line, if (best) 2 else 1)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(4), dp(12), dp(4), dp(12))
             setOnClickListener { openLink(o) }
         }
-        card.addView(photo(o, 64), LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(12) })
+        row.addView(photo(o, 60), LinearLayout.LayoutParams(dp(60), dp(60)).apply { marginEnd = dp(12) })
+
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        // Site ve puan
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        top.addView(sitePill(o))
-        if (o.dupCount > 0) top.addView(label("  +${o.dupCount} satıcı", 11f, muted))
-        top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        if (o.rating.isNotEmpty()) top.addView(label(
-            "★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "", 12f, muted))
-        top.addView(bell(o))
-        col.addView(top)
-
         col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 14f, ink).apply {
-            maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, dp(4))
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
         })
-
-        // Fiyat
-        val priceRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-        }
-        priceRow.addView(label(money(o.price), 18f, if (best) green else ink, true))
-        if (o.basket) priceRow.addView(label("  sepette", 12f, muted))
-        if (o.listPrice > o.price) priceRow.addView(label("  ${money(o.listPrice)}", 12f, muted).apply {
-            paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-        })
-        col.addView(priceRow)
+        // Site (renkli nokta) · puan · başka satıcı
+        val meta = android.text.SpannableStringBuilder()
+        meta.append("● ")
+        meta.setSpan(android.text.style.ForegroundColorSpan(siteColors[o.site] ?: muted), 0, 1, 0)
+        meta.append(o.site)
+        if (o.rating.isNotEmpty()) meta.append(" · ★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "")
+        if (o.dupCount > 0) meta.append(" · +${o.dupCount} satıcı")
+        col.addView(label("", 12f, muted).apply { text = meta; setPadding(0, dp(3), 0, 0) })
 
         // Etiketler
         val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(6), 0, 0) }
@@ -2665,22 +2821,48 @@ class MainActivity : Activity() {
         }
         if (o.note.isNotEmpty()) chips.addView(pill(o.note, if (o.note.startsWith("★")) green else red,
             if (o.note.startsWith("★")) greenBg else redBg, bold = true))
+        shipText(o)?.let { chips.addView(pill(it, if (it.startsWith("Kargo bedava")) green else orange,
+            if (it.startsWith("Kargo bedava")) greenBg else orangeBg)) }
+        if (o.memberPrice > 0 && o.memberPrice < o.price) chips.addView(pill("${o.memberName} ile ${money(o.memberPrice)}", ink, amberBg))
         if (o.exact) chips.addView(pill("Barkodla birebir", green, greenBg, bold = true))
         if (o.badge.isNotEmpty()) chips.addView(pill("✓ ${o.badge}", green, greenBg))
         if (o.origin.isNotEmpty()) chips.addView(pill(o.origin.substringBefore(" —"),
             if (o.origin.startsWith("Türkiye")) green else red, if (o.origin.startsWith("Türkiye")) greenBg else redBg))
         warrantyBadge(o)?.let { (txt, col2) -> chips.addView(pill(txt.substringBefore(" —"), col2,
             if (col2 == green) greenBg else if (col2 == red) redBg else greyBg)) }
+        // Geçmiş: bu ilanın önceki fiyatı
+        val oh = History.offer(this, o.link).filter { it.first < History.today() }
+        oh.lastOrNull()?.second?.let { prev ->
+            if (Math.abs(prev - o.price) >= 1) chips.addView(pill(
+                (if (o.price < prev) "↓ önce " else "↑ önce ") + money(prev),
+                if (o.price < prev) green else red, if (o.price < prev) greenBg else redBg))
+        }
         if (chips.childCount > 0) col.addView(chips)
-
         if (o.seller.isNotEmpty()) col.addView(label(
             "Satıcı: ${o.seller}" + if (o.sellerScore.isNotEmpty()) " · ${o.sellerScore}" else "", 12f, muted
-        ).apply { setPadding(0, dp(6), 0, 0) })
+        ).apply { setPadding(0, dp(5), 0, 0) })
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        results.addView(card, LinearLayout.LayoutParams(
+        // Sağda fiyat
+        val right = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            setPadding(dp(10), 0, 0, 0)
+        }
+        right.addView(label(money(o.price), 17f, if (best) green else ink, true).apply { gravity = Gravity.END })
+        if (o.listPrice > o.price) right.addView(label(money(o.listPrice), 12f, muted).apply {
+            paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG; gravity = Gravity.END
+        })
+        if (o.basket) right.addView(label("sepette", 11f, muted).apply { gravity = Gravity.END })
+        if (best) right.addView(label("en ucuz", 11f, green, true).apply { gravity = Gravity.END })
+        right.addView(bell(o), LinearLayout.LayoutParams(dp(36), dp(36)).apply { gravity = Gravity.END })
+        row.addView(right)
+
+        results.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+        ))
+        results.addView(View(this).apply { setBackgroundColor(line) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { setMargins(dp(76), 0, 0, 0) })
     }
 
     /** Kartta kısa açıklama: "60 ml", "Pro", "olası: miktar yazmıyor" */
@@ -2700,7 +2882,7 @@ class MainActivity : Activity() {
         results.addView(label(title, 15f, ink, true).apply { setPadding(dp(6), dp(18), dp(6), dp(6)) })
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 16, line)
+            background = rounded(surface, 16, line)
             setPadding(dp(16), dp(6), dp(16), dp(6))
         }
         results.addView(card, LinearLayout.LayoutParams(
@@ -2730,7 +2912,7 @@ class MainActivity : Activity() {
         val stateText = when (ok) { true -> "✓ Açık"; false -> "✗ Kapalı"; null -> "" }
         val row = rowBase(card, title, listOf(stateText, sub).filter { it.isNotEmpty() }.joinToString(" · "),
             when (ok) { true -> green; false -> red; null -> muted })
-        row.addView(label(button, 13f, ink, true).apply {
+        row.addView(label(button, 13f, if (ok == true) ink else accentOn, true).apply {
             background = rounded(if (ok == true) greyBg else gold, 12)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { action() }
@@ -2742,9 +2924,9 @@ class MainActivity : Activity() {
         row.addView(android.widget.Switch(this).apply {
             isChecked = checked
             thumbTintList = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(gold, Color.parseColor("#D6D3D1")))
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(gold, if (dark) c("#5A5A5A") else c("#D6D3D1")))
             trackTintList = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Color.parseColor("#E9C46A"), Color.parseColor("#E7E5E4")))
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(if (dark) c("#1F5A3C") else c("#A7D7B8"), if (dark) c("#333333") else c("#E7E5E4")))
             setOnCheckedChangeListener { _, v -> onChange(v) }
         })
     }
@@ -2827,24 +3009,56 @@ class MainActivity : Activity() {
             switchRow(src, site.name, "", siteOn(site.name)) { v -> settings.edit().putBoolean("site_${site.name}", v).apply() }
         }
 
-        // Kurallar
-        val rules = settingsCard("Kurallar (sonuçlarda gizlenenler)")
-        switchRow(rules, "Yurtdışı / ithal ilanları gizle", "International Version, menşei yurtdışı, TU/A olmayan cihazlar",
-            flag("hideAbroad")) { v -> settings.edit().putBoolean("hideAbroad", v).apply() }
-        switchRow(rules, "İthalatçı garantili ilanları gizle", "Ürün sayfası açılan pahalı ilanlarda geçerli",
-            flag("hideImporter")) { v -> settings.edit().putBoolean("hideImporter", v).apply() }
-        switchRow(rules, "Yenilenmiş / ikinci el / teşhir gizle", "", flag("hideUsed")) { v -> settings.edit().putBoolean("hideUsed", v).apply() }
-        switchRow(rules, "Şüpheli ucuz ilanları gizle", "Gerçek fiyatın çok altındaki taklit ya da yanlış ilanlar",
-            flag("hideSuspicious")) { v -> settings.edit().putBoolean("hideSuspicious", v).apply() }
-        val ratings = listOf(0f, 3.5f, 4f, 4.5f)
-        choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
-            listOf("Yok", "3,5", "4,0", "4,5"), ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
-            settings.edit().putFloat("minRating", ratings[i]).apply()
+        // Görünüm
+        val look = settingsCard("Görünüm")
+        choiceRow(look, "Tema", "Koyu tema gece göz yormaz", listOf("Telefona göre", "Açık", "Koyu"),
+            settings.getInt("theme", 0)) { i ->
+            settings.edit().putInt("theme", i).apply()
+            handler.post { recreate() }
         }
+
+        // Kurallar: genel ya da kategoriye özel
+        val rules = settingsCard("Kurallar (sonuçlarda gizlenenler)")
+        val cats = listOf("Genel") + categories
+        choiceRow(rules, "Düzenlenen", "Kategori seçilirse o kategorinin aramalarında genel kuralın yerine geçer",
+            cats, cats.indexOf(editCat).coerceAtLeast(0)) { i -> editCat = cats[i] }
+        val ruleDefs = listOf(
+            Triple("hideAbroad", "Yurtdışı / ithal ilanları gizle", "International Version, menşei yurtdışı, TU/A olmayan cihazlar"),
+            Triple("hideImporter", "İthalatçı garantili ilanları gizle", "Ürün sayfası açılan pahalı ilanlarda geçerli"),
+            Triple("hideUsed", "Yenilenmiş / ikinci el / teşhir gizle", ""),
+            Triple("hideSuspicious", "Şüpheli ucuz ilanları gizle", "Gerçek fiyatın çok altındaki taklit ya da yanlış ilanlar"),
+        )
+        val ratings = listOf(0f, 3.5f, 4f, 4.5f)
+        val ratingNames = listOf("Yok", "3,5", "4,0", "4,5")
         val counts = listOf(0, 10, 50, 100)
-        choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
-            listOf("Yok", "10", "50", "100"), counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
-            settings.edit().putInt("minReviews", counts[i]).apply()
+        val countNames = listOf("Yok", "10", "50", "100")
+        if (editCat == "Genel") {
+            ruleDefs.forEach { (k, t, sub) -> switchRow(rules, t, sub, flag(k)) { v -> settings.edit().putBoolean(k, v).apply() } }
+            choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
+                ratingNames, ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
+                settings.edit().putFloat("minRating", ratings[i]).apply()
+            }
+            choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
+                countNames, counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
+                settings.edit().putInt("minReviews", counts[i]).apply()
+            }
+        } else {
+            val cat = editCat
+            val tri = listOf("Genel ayar", "Açık", "Kapalı")
+            ruleDefs.forEach { (k, t, sub) ->
+                choiceRow(rules, t, (if (sub.isNotEmpty()) "$sub · " else "") + "genel: " + (if (flag(k)) "açık" else "kapalı"),
+                    tri, settings.getInt("cat_${cat}_$k", 0)) { i -> settings.edit().putInt("cat_${cat}_$k", i).apply() }
+            }
+            val rCur = settings.getFloat("cat_${cat}_minRating", -1f)
+            choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir",
+                listOf("Genel ayar") + ratingNames, if (rCur < 0) 0 else ratings.indexOf(rCur).coerceAtLeast(0) + 1) { i ->
+                settings.edit().putFloat("cat_${cat}_minRating", if (i == 0) -1f else ratings[i - 1]).apply()
+            }
+            val cCur = settings.getInt("cat_${cat}_minReviews", -1)
+            choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ilanlar gizlenir",
+                listOf("Genel ayar") + countNames, if (cCur < 0) 0 else counts.indexOf(cCur).coerceAtLeast(0) + 1) { i ->
+                settings.edit().putInt("cat_${cat}_minReviews", if (i == 0) -1 else counts[i - 1]).apply()
+            }
         }
 
         // Alarmlar
@@ -2864,7 +3078,7 @@ class MainActivity : Activity() {
             showSettings()
         }
 
-        results.addView(label("Fiyat Avcısı · test 0.41", 12f, muted).apply {
+        results.addView(label("Fiyat Avcısı · test 0.42", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -2874,11 +3088,14 @@ class MainActivity : Activity() {
     // ---------- Fiyat alarmı ----------
 
     /** İlan kartındaki zil: dokununca alarm kurma penceresi */
-    private fun bell(o: Offer): TextView {
+    private fun bell(o: Offer): ImageView {
         val on = Alarms.load(this).any { it.link.substringBefore('?') == o.link.substringBefore('?') }
-        return label(if (on) "🔔" else "🔕", 16f, ink).apply {
-            alpha = if (on) 1f else 0.55f
-            setPadding(dp(10), dp(2), dp(2), dp(2))
+        return ImageView(this).apply {
+            setImageResource(if (on) R.drawable.ic_bell else R.drawable.ic_bell_off)
+            imageTintList = android.content.res.ColorStateList.valueOf(if (on) gold else muted)
+            contentDescription = if (on) "Alarm kurulu" else "Fiyat alarmı kur"
+            setPadding(dp(8), dp(8), dp(4), dp(8))
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
             setOnClickListener { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true) }
         }
     }
@@ -2965,7 +3182,7 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(6), dp(10), dp(6))
             setOnClickListener { status.visibility = View.GONE; showHome() }
         })
-        if (list.isNotEmpty()) head.addView(label("Şimdi kontrol et", 13f, ink, true).apply {
+        if (list.isNotEmpty()) head.addView(label("Şimdi kontrol et", 13f, accentOn, true).apply {
             background = rounded(gold, 12)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener {
@@ -2991,12 +3208,12 @@ class MainActivity : Activity() {
         for (a in list) {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                background = rounded(Color.WHITE, 14, line)
+                background = rounded(surface, 14, line)
                 setPadding(dp(12), dp(12), dp(12), dp(12))
                 setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
             }
             val iv = ImageView(this).apply {
-                background = rounded(Color.WHITE, 12, line)
+                background = rounded(surface, 12, line)
                 setPadding(dp(4), dp(4), dp(4), dp(4))
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
@@ -3043,6 +3260,42 @@ class MainActivity : Activity() {
         if (i?.action != Intent.ACTION_SEND) return
         val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
         i.action = null
+        handleSharedText(text)
+    }
+
+    /** Kameradan barkod okutma (Google'ın tarayıcısı; ilk kullanımda kendini indirebilir) */
+    private fun scanBarcode() {
+        if (running) return
+        try {
+            val opts = com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
+                .setBarcodeFormats(
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_8,
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_UPC_A,
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_UPC_E,
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_CODE_128,
+                    com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
+                .enableAutoZoom()
+                .build()
+            com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this, opts).startScan()
+                .addOnSuccessListener { b ->
+                    val raw = (b.rawValue ?: "").trim()
+                    when {
+                        raw.startsWith("http") -> handleSharedText(raw)
+                        raw.isNotEmpty() -> { input.setText(raw); startTest() }
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Toast.makeText(this, "Barkod okuyucu açılamadı. İlk kullanımda Google birkaç saniye indirme yapıyor olabilir, " +
+                        "biraz sonra tekrar dene. (${e.message ?: e.javaClass.simpleName})", Toast.LENGTH_LONG).show()
+                }
+        } catch (e: Throwable) {
+            Toast.makeText(this, "Barkod okuyucu bu telefonda açılamadı: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Paylaşılan ya da QR'dan okunan yazı: linkse ürünü oku, değilse ara */
+    private fun handleSharedText(text: String) {
         val url = Regex("https?://\\S+").find(text)?.value?.trimEnd('.', ',', ')') ?: run {
             // Link yoksa paylaşılan yazıyı arama olarak kullan
             if (text.isNotBlank()) { input.setText(text.take(80)); startTest() }
@@ -3087,7 +3340,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 41\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 42\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

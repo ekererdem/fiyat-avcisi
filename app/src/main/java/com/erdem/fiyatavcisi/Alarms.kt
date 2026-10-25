@@ -219,6 +219,7 @@ object Alarms {
                     }
                     a.lastPrice = p
                     if (a.lowest <= 0 || p < a.lowest) a.lowest = p
+                    History.recordOffer(ctx, a.link, p)
                 }
                 if (a.wantStock && r.inStock == true && a.inStock == false) {
                     notify(ctx, a, "Stoğa girdi" + (p?.let { ": ${money(it)}" } ?: ""), "${a.title.take(70)} · ${a.site}")

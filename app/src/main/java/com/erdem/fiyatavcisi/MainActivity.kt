@@ -478,11 +478,39 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Uygulama çökerse hatanın ayrıntısını sakla; bir sonraki açılışta göster (teşhis için)
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                getSharedPreferences("crash", Context.MODE_PRIVATE).edit()
+                    .putString("last", android.util.Log.getStackTraceString(e).take(5000)).commit()
+            } catch (x: Exception) {}
+            prev?.uncaughtException(t, e)
+        }
         window.statusBarColor = ink
         setContentView(buildUi())
-        Alarms.ensureChannel(this)
-        Alarms.schedule(this, Alarms.load(this).isNotEmpty())
+        try {
+            Alarms.ensureChannel(this)
+            Alarms.schedule(this, Alarms.load(this).isNotEmpty())
+        } catch (e: Exception) {}
+        showLastCrash()
         handleShare(intent)
+    }
+
+    private fun showLastCrash() {
+        val cp = getSharedPreferences("crash", Context.MODE_PRIVATE)
+        val trace = cp.getString("last", null) ?: return
+        cp.edit().remove("last").apply()
+        AlertDialog.Builder(this)
+            .setTitle("Uygulama son kullanımda kapandı")
+            .setMessage("Hatanın ayrıntısı aşağıda. Kopyala'ya basıp bana gönderirsen düzeltirim.\n\n" + trace.take(1500))
+            .setPositiveButton("Kopyala") { _, _ ->
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                    .setPrimaryClip(ClipData.newPlainText("Fiyat Avcısı hata", "FİYAT AVCISI HATA\n" + trace))
+                Toast.makeText(this, "Hata kopyalandı", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Kapat", null)
+            .show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -608,7 +636,7 @@ class MainActivity : Activity() {
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Fiyat Avcısı", 21f, gold, true))
-        titles.addView(label("6 sitede aynı anda · test 0.39", 11f, Color.parseColor("#A8A29E")))
+        titles.addView(label("6 sitede aynı anda · test 0.40", 11f, Color.parseColor("#A8A29E")))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val menuBtn = label("⋮", 24f, Color.WHITE, true).apply {
             setPadding(dp(14), dp(2), dp(14), dp(2))
@@ -2671,7 +2699,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle(if (existing != null) "Alarm kurulu — güncelle" else "Fiyat alarmı kur")
             .setView(box)
-            .setPositiveButton("Kur") { _, _ ->
+            .setPositiveButton("Kur") { _, _ -> try {
                 val t = target.text.toString().replace(",", ".").toDoubleOrNull() ?: 0.0
                 val p = price ?: 0.0
                 Alarms.add(this, Alarm(
@@ -2682,7 +2710,16 @@ class MainActivity : Activity() {
                 askNotificationPermission()
                 Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
                 if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
-            }
+            } catch (e: Exception) {
+                // Çökmek yerine hatayı göster
+                AlertDialog.Builder(this).setTitle("Alarm kurulamadı")
+                    .setMessage(e.javaClass.simpleName + ": " + (e.message ?: "") + "\n\n" + android.util.Log.getStackTraceString(e).take(800))
+                    .setPositiveButton("Kopyala") { _, _ ->
+                        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                            .setPrimaryClip(ClipData.newPlainText("hata", android.util.Log.getStackTraceString(e)))
+                    }
+                    .setNegativeButton("Kapat", null).show()
+            } }
             .apply { if (existing != null) setNeutralButton("Alarmı sil") { _, _ -> Alarms.remove(this@MainActivity, existing.id); if (offers.isNotEmpty() && !running) render(final = finished) } }
             .setNegativeButton("Vazgeç", null)
             .show()
@@ -2837,7 +2874,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 39\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 40\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

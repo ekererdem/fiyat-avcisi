@@ -94,11 +94,13 @@ object Alarms {
         val js = ctx.getSystemService(JobScheduler::class.java) ?: return
         if (!on) { js.cancel(JOB_ID); return }
         if (js.allPendingJobs.any { it.id == JOB_ID }) return
-        js.schedule(JobInfo.Builder(JOB_ID, ComponentName(ctx, AlarmJobService::class.java))
+        val b = JobInfo.Builder(JOB_ID, ComponentName(ctx, AlarmJobService::class.java))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setPeriodic(INTERVAL_MS)
-            .setPersisted(true)
-            .build())
+        // Telefon yeniden başlayınca da sürsün (izin yoksa bu kısım atlanır)
+        try { js.schedule(b.setPersisted(true).build()) } catch (e: Exception) {
+            try { js.schedule(b.setPersisted(false).build()) } catch (x: Exception) {}
+        }
     }
 
     // ---------- Sayfadan fiyat okuma ----------

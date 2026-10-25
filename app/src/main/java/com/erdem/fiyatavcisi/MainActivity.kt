@@ -139,7 +139,7 @@ class MainActivity : Activity() {
     private var paper = 0
     private var surface = 0
     private var muted = 0
-    private var hint = 0
+    private var hintColor = 0
     private var green = 0
     private var red = 0
     private var orange = 0
@@ -162,12 +162,12 @@ class MainActivity : Activity() {
         }
         if (dark) {
             paper = c("#0F0F0F"); surface = c("#1A1A1A"); greyBg = c("#242424"); ink = c("#F2F2F2"); muted = c("#A3A3A3")
-            hint = c("#6E6E6E"); line = c("#2A2A2A"); gold = c("#4CC38A"); accentOn = c("#0F0F0F"); brand = c("#F2C14E")
+            hintColor = c("#6E6E6E"); line = c("#2A2A2A"); gold = c("#4CC38A"); accentOn = c("#0F0F0F"); brand = c("#F2C14E")
             green = c("#4CC38A"); red = c("#F28B82"); orange = c("#F5A962")
             greenBg = c("#13301F"); redBg = c("#3B1A18"); orangeBg = c("#3A2814"); amberBg = c("#3A3016")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
-            hint = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0F6B3A"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
+            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0F6B3A"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
             green = c("#0F6B3A"); red = c("#B42318"); orange = c("#B54708")
             greenBg = c("#EAF5EE"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#FFF6DB")
         }
@@ -772,7 +772,7 @@ class MainActivity : Activity() {
             setSingleLine()
             textSize = 16f
             setTextColor(ink)
-            setHintTextColor(hint)
+            setHintTextColor(hintColor)
             background = null
             setPadding(0, dp(10), 0, dp(10))
             imeOptions = EditorInfo.IME_ACTION_SEARCH
@@ -836,7 +836,7 @@ class MainActivity : Activity() {
             setSingleLine()
             textSize = 14f
             setTextColor(ink)
-            setHintTextColor(hint)
+            setHintTextColor(hintColor)
             background = rounded(surface, 12, line)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             addTextChangedListener(object : android.text.TextWatcher {

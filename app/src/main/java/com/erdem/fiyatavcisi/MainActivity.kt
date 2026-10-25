@@ -3411,7 +3411,7 @@ class MainActivity : Activity() {
         val first = items.first()
         val unit = first.unitTarget > 0 || first.unitAmount > 0
         val fmt = { v: Double -> if (unit) Alarms.unitText(v, items.firstOrNull { it.unitName.isNotEmpty() }?.unitName ?: "adet") else money(v) }
-        val best = items.filter { Alarms.metric(it) != null }.minByOrNull { Alarms.metric(it)!! }
+        val best = Alarms.groupBest(items)
         val tracked = items.any { it.link.substringBefore('?') == o.link.substringBefore('?') }
         val target = if (first.unitTarget > 0) first.unitTarget else first.target
         val msg = StringBuilder()
@@ -3645,7 +3645,7 @@ class MainActivity : Activity() {
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
         // Ürün alarmları: bir kart, içinde siteler
         for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
-            val best = items.filter { Alarms.metric(it) != null }.minByOrNull { Alarms.metric(it)!! } ?: items.first()
+            val best = Alarms.groupBest(items) ?: items.first()
             val unit = best.unitAmount > 0
             val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
             val card = LinearLayout(this).apply {

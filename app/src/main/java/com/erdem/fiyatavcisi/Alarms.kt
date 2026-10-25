@@ -126,6 +126,13 @@ object Alarms {
     /** Ölçü: birim fiyat varsa o, yoksa fiyat */
     fun metric(a: Alarm): Double? = a.unitPrice() ?: a.lastPrice.takeIf { it > 0 }
 
+    /** Gruptaki en uygun ilan; diğerlerinin yarısından ucuz görünen (yanlış okunmuş) ilan sayılmaz */
+    fun groupBest(items: List<Alarm>): Alarm? {
+        val ms = items.mapNotNull { metric(it) }.sorted()
+        val med = if (ms.isEmpty()) 0.0 else ms[ms.size / 2]
+        return items.filter { metric(it) != null && (ms.size < 3 || metric(it)!! >= med * 0.5) }.minByOrNull { metric(it)!! }
+    }
+
     fun unitText(v: Double, unit: String) = "${tl.format(v)} TL/$unit"
 
     // ---------- Arka plan zamanlama ----------
@@ -194,13 +201,25 @@ object Alarms {
             Regex(""""discountedPrice"\s*:\s*\{[^{}]{0,120}?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)"""),
             Regex(""""sellingPrice"\s*:\s*\{[^{}]{0,120}?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)"""),
             Regex(""""priceToPay"[^<]{0,400}?a-offscreen">\s*([0-9.]+,[0-9]{2})"""),
-            Regex("""class="a-offscreen">\s*([0-9.]+,[0-9]{2})\s*TL"""),
         )
         var price: Double? = null
         for (re in priceRes) {
             val m = re.find(html) ?: continue
             val v = parseNum(m.groupValues[1])
             if (v != null && v > 0) { price = v; break }
+        }
+        // Amazon: sayfadaki ilk fiyat bazen "(16,13 TL / adet)" birim fiyatıdır; birim fiyatları atla
+        if (price == null) {
+            for (m in Regex("""class="a-offscreen">\s*([0-9.]+,[0-9]{2})\s*TL""").findAll(html)) {
+                val before = html.substring(maxOf(0, m.range.first - 250), m.range.first)
+                val after = html.substring(m.range.last + 1, minOf(html.length, m.range.last + 200))
+                val perUnit = before.contains("pricePerUnit", true) || before.contains("unitPrice", true) ||
+                    Regex("""^[^()]{0,160}?/\s*(?:sayım|adet|count|kg|g|lt|l|ml|100)""", RegexOption.IGNORE_CASE).containsMatchIn(after.replace(Regex("<[^>]+>"), " ")) ||
+                    before.contains("a-text-price")
+                if (perUnit) continue
+                val v = parseNum(m.groupValues[1])
+                if (v != null && v > 0) { price = v; break }
+            }
         }
 
         // Stok
@@ -242,7 +261,13 @@ object Alarms {
                 val r = fetch(a.link)
                 a.lastCheck = System.currentTimeMillis()
                 if (a.image.isEmpty() && r.image.isNotEmpty()) a.image = r.image
-                val p = r.price
+                var p = r.price
+                // Mantıksız okuma koruması: kurulduğu fiyatın yarısından çok aşağı bir fiyat büyük ihtimalle
+                // sayfadaki başka bir sayıdır (birim fiyat, taksit, kargo). Kabul etme, eski doğru fiyatı koru.
+                val ref = if (a.startPrice > 0) a.startPrice else 0.0
+                if (ref > 0 && a.lastPrice > 0 && a.lastPrice < ref * 0.4) { a.lastPrice = ref; if (a.lowest < ref * 0.4) a.lowest = ref }
+                var odd: Double? = null
+                if (p != null && ref > 0 && p < ref * 0.4) { odd = p; p = null }
                 if (p != null) {
                     val dropped = a.lastPrice > 0 && p < a.lastPrice - 0.5
                     // Hedef: adet başıysa birim fiyatla, değilse toplam fiyatla
@@ -271,7 +296,7 @@ object Alarms {
                     notified++
                 }
                 if (r.inStock != null) a.inStock = r.inStock
-                a.status = r.note + when (r.inStock) { true -> " · stokta"; false -> " · stokta yok"; else -> "" }
+                a.status = (if (odd != null) "şüpheli fiyat okundu (${money(odd)}), yok sayıldı" else r.note) + when (r.inStock) { true -> " · stokta"; false -> " · stokta yok"; else -> "" }
             } catch (e: Exception) {
                 a.lastCheck = System.currentTimeMillis()
                 a.status = "kontrol edilemedi (${e.javaClass.simpleName})"
@@ -279,7 +304,7 @@ object Alarms {
         }
         // Ürün alarmları: gruptaki en uygun ilan hedefe indiyse ya da daha önceki en iyiden ucuzladıysa tek bildirim
         for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
-            val best = items.filter { metric(it) != null }.minByOrNull { metric(it)!! } ?: continue
+            val best = groupBest(items) ?: continue
             val m = metric(best)!!
             val key = "gbest_$gid"
             val prev = prefs(ctx).getFloat(key, 0f).toDouble()

@@ -370,7 +370,7 @@ class MainActivity : Activity() {
     private var filterText = ""
     private var sortMode = 0
     private val hiddenSites = HashSet<String>()
-    private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Birim fiyat", "Puan", "Değerlendirme sayısı", "Kargo dahil en ucuz")
+    private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Tane / kg / L başı fiyat", "Puan", "Değerlendirme sayısı", "Kargo dahil en ucuz")
     private val refilter = Runnable { if (offers.isNotEmpty()) render(final = finished) }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -2660,9 +2660,16 @@ class MainActivity : Activity() {
         }
 
         val cheapest = fm.firstOrNull()
-        if (fm.isNotEmpty()) section("match", "Aynı ürün · " + (if (sortMode == 0) "ucuzdan pahalıya" else sortNames[sortMode].lowercase(Locale("tr", "TR"))),
+        // Adetli / gramlı ürünlerde önerilen sıra: tane (kg, L) başı fiyat
+        val unitBased = fm.count { unitPrice(it) != null } * 2 >= fm.size && fm.size >= 2
+        val matchSortName = when {
+            sortMode != 0 -> sortNames[sortMode].lowercase(Locale("tr", "TR"))
+            unitBased -> "tane / kg başı fiyata göre"
+            else -> "ucuzdan pahalıya"
+        }
+        if (fm.isNotEmpty()) section("match", "Aynı ürün · $matchSortName",
             fm.size, green, true) {
-            applySort(fm).forEach { o -> offerRow(o, o === cheapest) }
+            (if (sortMode == 0 && unitBased) sortedByUnit(fm) else applySort(fm)).forEach { o -> offerRow(o, o === cheapest) }
         }
         // Eşleşen ürün varsa muadil ancak birim fiyatı ondan ucuzsa anlamlıdır (pahalı taklitler gösterilmez)
         val bestMatchUnit = matches.filter { !isSet(it) }.mapNotNull { unitPrice(it)?.first }.minOrNull()
@@ -3001,7 +3008,7 @@ class MainActivity : Activity() {
 
         // Etiketler
         val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(6), 0, 0) }
-        unitText(o).takeIf { it.isNotEmpty() }?.let { chips.addView(pill(it.removePrefix("≈ "), ink, greyBg)) }
+
         when {
             o.kind == Kind.MATCH && o.variant.isNotEmpty() -> chips.addView(pill(o.variant, ink, greyBg))
             o.kind != Kind.MATCH && o.kind != Kind.MUADIL -> chips.addView(pill(shortKind(o), orange, orangeBg))
@@ -3045,6 +3052,16 @@ class MainActivity : Activity() {
             paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG; gravity = Gravity.END; setSingleLine(true)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
         if (o.basket) right.addView(label("sepette", 11f, muted).apply { gravity = Gravity.END })
+        // Tane / kg / L başı fiyat, fiyatın hemen altında
+        unitText(o).takeIf { it.isNotEmpty() }?.let {
+            right.addView(label(it.removePrefix("≈ "), 12f, if (o.note.startsWith("★")) green else ink, true).apply {
+                gravity = Gravity.END; setSingleLine(true)
+                background = rounded(if (o.note.startsWith("★")) greenBg else greyBg, 10)
+                setPadding(dp(6), dp(2), dp(6), dp(2))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.END; topMargin = dp(3)
+            })
+        }
         if (best) right.addView(label("en ucuz", 11f, green, true).apply { gravity = Gravity.END })
         right.addView(bell(o), LinearLayout.LayoutParams(dp(36), dp(36)).apply { gravity = Gravity.END })
         // Fiyat sütunu en az kendi genişliği kadar yer alır, ad sütunu kalanı paylaşır
@@ -3571,7 +3588,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 48\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 49\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

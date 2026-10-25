@@ -511,6 +511,41 @@ class MainActivity : Activity() {
     private fun extractJs(linkPattern: String, q: String = "") = """
         (function(){
           var pat = new RegExp('__PAT__');
+          // Migros: sayfa teslimat seçimi isteyip ürünleri çizmeyebiliyor; sitenin kendi arama servisinden oku
+          if (location.host.indexOf('migros.com.tr') >= 0) {
+            try {
+              if (!window.__faMig) {
+                var mx = new XMLHttpRequest();
+                mx.open('GET', '/rest/search/screens/products?q=' + encodeURIComponent(__RQ__), false);
+                mx.setRequestHeader('Accept', 'application/json');
+                mx.send();
+                window.__faMig = mx.status == 200 ? mx.responseText : ('ERR' + mx.status);
+              }
+              var mfound = [];
+              if (window.__faMig.charAt(0) == '{') {
+                (function walk(o, d){
+                  if (!o || d > 9) return;
+                  if (Array.isArray(o)) { o.forEach(function(e){ walk(e, d + 1); }); return; }
+                  if (typeof o == 'object') {
+                    if (o.prettyName && o.name && (o.shownPrice != null || o.regularPrice != null)) mfound.push(o);
+                    else for (var k in o) walk(o[k], d + 1);
+                  }
+                })(JSON.parse(window.__faMig), 0);
+              }
+              var mc = mfound.map(function(o){
+                var sp = o.shownPrice != null ? o.shownPrice : o.regularPrice, rp = o.regularPrice;
+                var ln = String(o.prettyName).replace(/^\//, '');
+                if (!/-p-[0-9a-f]+$/.test(ln) && o.id != null && !isNaN(o.id)) ln = ln + '-p-' + Number(o.id).toString(16);
+                var img = '';
+                try { var u = (o.images && o.images[0] && o.images[0].urls) || {}; img = u.PRODUCT_LIST || u.PRODUCT_DETAIL || u[Object.keys(u)[0]] || ''; } catch (e) {}
+                var nm = (o.brand && o.brand.name && String(o.name).toLowerCase().indexOf(String(o.brand.name).toLowerCase()) < 0 ? o.brand.name + ' ' : '') + o.name;
+                return { t: nm, p: sp / 100, lp: (rp && rp > sp) ? rp / 100 : 0, link: 'https://www.migros.com.tr/' + ln, img: img, raw: nm, r: '', rc: '' };
+              }).filter(function(c){ return c.p > 0; });
+              if (mc.length) return JSON.stringify({ title: document.title, url: location.href, block: '', anchors: mc.length, links: mc.length, cards: mc, api: true });
+              if (window.__faMig.charAt(0) == '{' && !mfound.length && document.readyState == 'complete')
+                return JSON.stringify({ title: document.title, url: location.href, block: '', noResults: true, anchors: 0, links: 0, cards: [] });
+            } catch (e) {}
+          }
           var priceRe = /(?:₺\s?[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?(?!\d))|(?:(?<![\d.,])(?<!,\s?)[1-9]\d{0,2}(?:\.\d{3})*(?:,\d{1,2})?\s?(?:TL|₺(?!\s?\d)))/g;
           var priceOne = new RegExp(priceRe.source);
           function keyOf(h){ var m = h.match(/\/dp\/([A-Z0-9]{10})/); if (m) return 'dp/' + m[1]; return h.split('#')[0].split('?')[0]; }
@@ -574,7 +609,7 @@ class MainActivity : Activity() {
           }
           function num(s){ return parseFloat(s.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.')); }
 
-          var low = (document.body ? document.body.innerText : '').toLowerCase();
+          var low = (document.body ? document.body.innerText : '').toLocaleLowerCase('tr-TR');
           var words = ['captcha','robot olmad','robot değil','access denied','erişim engellendi','are you a human',
             'verify you are human','güvenlik doğrulaması','pardon our interruption','request blocked','just a moment',
             'karakterleri girin','characters you see'];
@@ -583,7 +618,7 @@ class MainActivity : Activity() {
           // Site "bulunamadı" diyorsa altındaki öneri/popüler ürünleri sonuç sanma
           var head = low.slice(0, 5000);
           // (Sepet/favori kutusundaki "ürün bulunamadı" yazıları sayılmaz)
-          var noresRe = /sonuç bulunamadı|ürün bulunamadı|bulamadık|sonuç bulunmamaktadır|ürün bulunmamaktadır|sonuç bulunmadı|eşleşen (bir )?(ürün|sonuç) (bulunamadı|yok)|için sonuç yok|(^|[^0-9])0 (ürün|sonuç)/g;
+          var noresRe = /sonuç bulunamadı|ürün bulunamadı|bulamadık|sonuç bulunmamaktadır|ürün bulunmamaktadır|sonuç bulunmadı|eşleşen (bir )?(ürün|sonuç) (bulunamadı|yok)|için sonuç yok|uygun ürün bulunamadı|(^|[^0-9])0 (adet )?(ürün|sonuç)/g;
           var nores = false, nm;
           while ((nm = noresRe.exec(head))) {
             if (!/sepet|favori|liste/.test(head.slice(Math.max(0, nm.index - 40), nm.index))) { nores = true; break; }
@@ -710,6 +745,7 @@ class MainActivity : Activity() {
             pageSample: cards.length ? '' : (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 200) });
         })()
     """.trimIndent().replace("__PAT__", linkPattern)
+        .replace("__RQ__", JSONObject.quote(siteQuery(q)))
         .replace("__Q__", q.lowercase(Locale("tr", "TR")).replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1478,7 +1514,8 @@ class MainActivity : Activity() {
     }
 
     /** Siteleri aynı anda tarar; her site bitince [onEach], hepsi bitince [onAll] */
-    private fun runSites(all: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
+    private fun runSites(all: List<Site>, q: String, label: String, onEach: () -> Unit, noSimple: Boolean = false,
+                         hardMs: Long = 25000, onAll: () -> Unit) {
         // Ayarlardan kapatılan siteler ve aramanın kategorisiyle ilgisi olmayan siteler taranmaz
         val cat = detectCategory()
         val list = all.filter { siteOn(it.name) && (it.cats.isEmpty() || cat in it.cats) }
@@ -1504,7 +1541,7 @@ class MainActivity : Activity() {
             val i = next++
             val site = list[i]
             viewOf[i] = v
-            runSite(v, site, q, simpleUsed = false, reloaded = false) { d, simpleUsed ->
+            runSite(v, site, q, simpleUsed = noSimple, reloaded = false) { d, simpleUsed ->
                 if (gen == phaseGen && !phaseDone) {
                     done[i] = true
                     collect(site.name, d, q, simpleUsed, slots.getValue(v))
@@ -1528,7 +1565,8 @@ class MainActivity : Activity() {
         cut = {
             if (gen == phaseGen && !phaseDone) {
                 val el = android.os.SystemClock.elapsedRealtime() - t0
-                if (list.size - left >= 4 || el >= 25000) {
+                // Hedefli (ikinci) aramada siteler sonuna kadar beklenir; normal aramada 4 site bitince yavaşlar beklenmez
+                if (el >= hardMs || (hardMs <= 25000 && list.size - left >= 4)) {
                     list.forEachIndexed { i, s ->
                         if (!done[i]) {
                             viewOf[i]?.let { v -> slots.getValue(v).gen++; v.stopLoading() }
@@ -1563,6 +1601,15 @@ class MainActivity : Activity() {
         running = true
         finished = false
         startedAt = android.os.SystemClock.elapsedRealtime()
+        // Emniyet: hangi adımda takılırsa takılsın arama 70 saniyede biter, o ana kadar bulunanlar gösterilir
+        val myStart = startedAt
+        handler.postDelayed({
+            if (startedAt == myStart && running && !finished) {
+                siteSummary.add("Arama 70 saniyede bitirildi (takılan adım: ${status.text})")
+                try { prepareResults() } catch (e: Exception) {}
+                finishSearch()
+            }
+        }, 70000)
         resolvedAt = 0L
         results.removeAllViews()
         expanded.clear()
@@ -2352,7 +2399,7 @@ class MainActivity : Activity() {
     private fun classify() {
         queryAmount = amountOf(identity?.searchQuery ?: query)
         val id = identity
-        if (id != null) classifyByIdentity(id) else classifyByWords()
+        if (id != null) classifyByIdentity(id) else { classifyByWords(); markBrandlessTwins() }
         markSuspiciousAndOrigin()
     }
 
@@ -2455,6 +2502,28 @@ class MainActivity : Activity() {
                     Regex("$m\\s*/\\s*([0-9]{2,3})").find(t)?.let { o.variant = "${m.uppercase()}/${it.groupValues[1]}" }
                 }
             }
+        }
+    }
+
+    /** Markasız satılan aynı ürün: adı (marka hariç) bulunan eşleşmeyle neredeyse aynı, sayıları da aynıysa "olası" */
+    private fun markBrandlessTwins() {
+        val brand = norm(query.split(" ").firstOrNull().orEmpty())
+        if (brand.length < 3) return
+        fun toks(t: String) = canonText(t).lowercase(Locale("tr", "TR")).split(Regex("[^\\p{L}\\p{N}]+"))
+            .map { norm(it) }.filter { it.isNotEmpty() && it != brand }.toSet()
+        val matches = offers.filter { it.kind == Kind.MATCH }.map { toks(it.title) }
+        if (matches.isEmpty()) return
+        for (o in offers) {
+            if (o.kind != Kind.OTHER && o.kind != Kind.ACCESSORY) continue
+            if (norm(o.title).contains(brand)) continue
+            val t = toks(o.title)
+            val nums = t.filter { x -> x.all { it.isDigit() } }
+            val twin = matches.any { m ->
+                val inter = (t intersect m).size.toDouble()
+                val jac = inter / (t union m).size
+                jac >= 0.6 && nums.all { it in m }
+            }
+            if (twin) { o.kind = Kind.POSSIBLE; o.otherModel = "marka yazmıyor, adı aynı" }
         }
     }
 
@@ -2648,7 +2717,8 @@ class MainActivity : Activity() {
                         .append(" (").append(again.joinToString { it.name }).append(")\n")
                     weakSites.clear()
                     val prevScan = scanSites
-                    runSites(again, rq, "Ürün adıyla tekrar aranıyor", onEach = { prepareResults(); render(final = false) }) {
+                    runSites(again, rq, "Ürün adıyla tekrar aranıyor", onEach = { prepareResults(); render(final = false) },
+                        noSimple = true, hardMs = 35000) {
                         scanSites = prevScan; startDetails()
                     }
                     return
@@ -2667,6 +2737,8 @@ class MainActivity : Activity() {
         }
         val gen = ++phaseGen
         var left = detailQueue.size
+        // Ürün sayfaları en çok 22 saniye beklenir
+        handler.postDelayed({ if (gen == phaseGen && !finished) finishSearch() }, 22000)
         status.text = "Satıcı ve garanti: ${detailQueue.size} ürün sayfası aynı anda açılıyor…"
         detailQueue.forEachIndexed { i, o ->
             openDetail(pool[i], o, retried = false) {

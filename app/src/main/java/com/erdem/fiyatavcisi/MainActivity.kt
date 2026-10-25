@@ -411,9 +411,11 @@ class MainActivity : Activity() {
               .replace(/en düşük fiyat\s*\([^)]*\)\s*:?\s*(?:₺\s?)?[\d.,]+[,–\-]*(?:\s*TL)?/gi, ' ');
           }
           // Kartın ürün fotoğrafı (tembel yüklenen sitelerde data-src)
-          function imgOf(box){
-            // Kartın en büyük resmi ürün fotoğrafıdır; "Avantajlı", kampanya rozetleri ve logolar küçüktür
+          function imgOf(box, ttl){
+            // Ürün fotoğrafı: adı ilan adıyla örtüşen ya da ürün resmi sunucusundaki resim önce, sonra en büyüğü.
+            // ("Avantajlı" gibi rozetler bazen üründen büyük çiziliyor.)
             var best = '', bestW = -1;
+            var tw = (ttl || '').toLowerCase().split(/[^a-zçğıöşü0-9]+/).filter(function(x){ return x.length >= 4; });
             var bad = /sprite|logo|icon|badge|rozet|etiket|label|sticker|campaign|kampanya|avantaj|placeholder|blank|\.svg|\.gif/i;
             function pick(u, w){
               u = (u || '').trim().split(' ')[0];
@@ -427,7 +429,11 @@ class MainActivity : Activity() {
               var w = im.naturalWidth || im.width || parseInt(im.getAttribute('width') || '0', 10) || 0;
               if (w > 0 && w < 50) continue;
               var alt = (im.getAttribute('alt') || '').toLowerCase();
-              if (/avantaj|kampanya|rozet|badge|kargo|logo/.test(alt)) continue;
+              if (/avantaj|kampanya|rozet|badge|kargo|logo|indirim|kupon|fırsat/.test(alt)) continue;
+              var hits = tw.filter(function(x){ return alt.indexOf(x) >= 0; }).length;
+              var src0 = im.currentSrc || im.src || im.getAttribute('data-src') || '';
+              if (hits >= 2) w += 10000;
+              if (/productimages|\/product|\/urun|cdn\.dsmcdn|images-amazon|m\.media-amazon|\/mnresize\/|\/s\/\d+/i.test(src0)) w += 5000;
               [im.currentSrc, im.src, im.getAttribute('data-src'), im.getAttribute('data-original'), im.getAttribute('data-lazy'),
                im.getAttribute('data-image'), im.getAttribute('srcset'), im.getAttribute('data-srcset')]
                 .forEach(function(u){ pick(u, w || 100); });
@@ -557,7 +563,7 @@ class MainActivity : Activity() {
               r: rm ? rm[1] : '', rc: cm ? cm[1] : '', link: a.href,
               badge: ((/yetkili satıcı|resmi satıcı|resmi mağaza|marka mağazası/i.exec(text) || [''])[0]),
               mp: member, mpn: memberName, ship: ship, fover: freeOver,
-              img: imgOf(el), alts: ok, raw: text.replace(/\s+/g, ' ').slice(0, 260) });
+              img: imgOf(el, title), alts: ok, raw: text.replace(/\s+/g, ' ').slice(0, 260) });
           }
           // Farklı ürünlerin çoğunda aynı fiyat varsa ("300 TL üzeri ücretsiz kargo" gibi bir afiş): o sayı fiyat değildir
           if (cards.length >= 4) {
@@ -3374,16 +3380,72 @@ class MainActivity : Activity() {
     // ---------- Fiyat alarmı ----------
 
     /** İlan kartındaki zil: dokununca alarm kurma penceresi */
+    /** Bu aramaya kurulu ürün alarmı (varsa grup numarası) */
+    private fun productAlarmGroup(): Long? =
+        Alarms.load(this).firstOrNull { it.groupId != 0L && norm(it.groupQuery) == norm(userInput) }?.groupId
+
     private fun bell(o: Offer): ImageView {
-        val on = Alarms.load(this).any { it.link.substringBefore('?') == o.link.substringBefore('?') }
+        val all = Alarms.load(this)
+        val own = all.any { it.link.substringBefore('?') == o.link.substringBefore('?') }
+        // Bu ürüne (aramaya) ürün alarmı kuruluysa aynı ürünün bütün ilanları "alarm var" görünür
+        val gid = if (o.kind == Kind.MATCH || o.kind == Kind.OTHER_PACKAGE) productAlarmGroup() else null
+        val on = own || gid != null
         return ImageView(this).apply {
             setImageResource(if (on) R.drawable.ic_bell else R.drawable.ic_bell_off)
             imageTintList = android.content.res.ColorStateList.valueOf(if (on) gold else muted)
             contentDescription = if (on) "Alarm kurulu" else "Fiyat alarmı kur"
             setPadding(dp(8), dp(8), dp(4), dp(8))
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-            setOnClickListener { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o) }
+            setOnClickListener {
+                val g = gid ?: all.firstOrNull { it.link.substringBefore('?') == o.link.substringBefore('?') && it.groupId != 0L }?.groupId
+                if (g != null) productAlarmDialog(g, o)
+                else alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+            }
         }
+    }
+
+    /** Ürün alarmı zaten kurulu: bilgi + bu ilanı ekle / hedefi değiştir / sil */
+    private fun productAlarmDialog(gid: Long, o: Offer) {
+        val items = Alarms.load(this).filter { it.groupId == gid }
+        if (items.isEmpty()) { alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o); return }
+        val first = items.first()
+        val unit = first.unitTarget > 0 || first.unitAmount > 0
+        val fmt = { v: Double -> if (unit) Alarms.unitText(v, items.firstOrNull { it.unitName.isNotEmpty() }?.unitName ?: "adet") else money(v) }
+        val best = items.filter { Alarms.metric(it) != null }.minByOrNull { Alarms.metric(it)!! }
+        val tracked = items.any { it.link.substringBefore('?') == o.link.substringBefore('?') }
+        val target = if (first.unitTarget > 0) first.unitTarget else first.target
+        val msg = StringBuilder()
+        msg.append("${first.groupName.ifEmpty { first.title }}\n\n")
+        msg.append("${items.size} ilan takipte: ${items.map { it.site }.distinct().joinToString(", ")}\n")
+        best?.let { msg.append("Şu an en uygun: ${it.site} · ${fmt(Alarms.metric(it)!!)}\n") }
+        msg.append(if (target > 0) "Hedef: ${fmt(target)}" else "Hedef: her ucuzlamada haber ver")
+        msg.append("\n\n").append(if (tracked) "Dokunduğun ilan zaten takipte." else "Dokunduğun ilan (${o.site}, ${money(o.price)}) takipte değil.")
+        AlertDialog.Builder(this)
+            .setTitle("Bu ürün için alarm kurulu")
+            .setMessage(msg.toString())
+            .apply {
+                if (!tracked) setPositiveButton("Bu ilanı da ekle") { _, _ ->
+                    val cu = offerUnit(o)
+                    Alarms.save(this@MainActivity, Alarms.load(this@MainActivity) + first.copy(
+                        id = System.currentTimeMillis(), title = o.title, site = o.site, link = o.link, image = o.image,
+                        startPrice = o.price, lastPrice = o.price, lowest = o.price, lastCheck = 0L, status = "elle eklendi",
+                        unitAmount = if (unit) cu?.first ?: 0.0 else 0.0, unitName = if (unit) cu?.second.orEmpty() else ""))
+                    Toast.makeText(this@MainActivity, "İlan ürün alarmına eklendi", Toast.LENGTH_SHORT).show()
+                    if (offers.isNotEmpty() && !running) render(final = finished)
+                }
+                else setPositiveButton("Kapat", null)
+            }
+            .setNeutralButton("Alarmı sil") { _, _ ->
+                Alarms.removeGroup(this@MainActivity, gid)
+                Toast.makeText(this@MainActivity, "Ürün alarmı silindi", Toast.LENGTH_SHORT).show()
+                if (offers.isNotEmpty() && !running) render(final = finished)
+            }
+            .setNegativeButton("Hedefi değiştir") { _, _ ->
+                // Aynı grup yeniden kurulur (eski grup silinir)
+                Alarms.removeGroup(this@MainActivity, gid)
+                alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+            }
+            .show()
     }
 
     /** İlanın birim bölümü: birim fiyat = fiyat / bölüm ("216 adet" -> 216, "200 g" -> 0,2 kg) */
@@ -3766,7 +3828,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 52\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 53\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

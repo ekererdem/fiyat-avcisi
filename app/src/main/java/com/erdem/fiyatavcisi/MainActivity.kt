@@ -2247,8 +2247,9 @@ class MainActivity : Activity() {
 
     // ---------- Sonuç ekranı ----------
 
+    // Sayı ile TL arasında bölünmez boşluk: fiyat iki satıra kırılmasın
     private fun money(v: Double) =
-        "${if (v == Math.floor(v)) tlWhole.format(v) else tl.format(v)} TL"
+        "${if (v == Math.floor(v)) tlWhole.format(v) else tl.format(v)}\u00A0TL"
 
     /** "13,2 B" (bin) gibi yazımları sayıya çevirip okunur hale getirir */
     private fun countText(s: String): String {
@@ -2636,7 +2637,7 @@ class MainActivity : Activity() {
             addView(label("En ucuz · ${o.site}", 12f, green, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(bell(o))
         })
-        col.addView(label(money(o.price), 30f, green, true))
+        col.addView(label(money(o.price), 30f, green, true).apply { setSingleLine(true) })
         col.addView(label(o.title, 13f, ink).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
         val extra = mutableListOf<String>()
         if (o.seller.isNotEmpty()) extra.add("Satıcı ${o.seller}")
@@ -2849,14 +2850,20 @@ class MainActivity : Activity() {
             gravity = Gravity.END
             setPadding(dp(10), 0, 0, 0)
         }
-        right.addView(label(money(o.price), 17f, if (best) green else ink, true).apply { gravity = Gravity.END })
+        right.addView(label(money(o.price), 17f, if (best) green else ink, true).apply {
+            gravity = Gravity.END
+            maxLines = 1
+            setSingleLine(true)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
         if (o.listPrice > o.price) right.addView(label(money(o.listPrice), 12f, muted).apply {
-            paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG; gravity = Gravity.END
-        })
+            paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG; gravity = Gravity.END; setSingleLine(true)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
         if (o.basket) right.addView(label("sepette", 11f, muted).apply { gravity = Gravity.END })
         if (best) right.addView(label("en ucuz", 11f, green, true).apply { gravity = Gravity.END })
         right.addView(bell(o), LinearLayout.LayoutParams(dp(36), dp(36)).apply { gravity = Gravity.END })
-        row.addView(right)
+        // Fiyat sütunu en az kendi genişliği kadar yer alır, ad sütunu kalanı paylaşır
+        right.minimumWidth = dp(84)
+        row.addView(right, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         results.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3078,7 +3085,7 @@ class MainActivity : Activity() {
             showSettings()
         }
 
-        results.addView(label("Fiyat Avcısı · test 0.42", 12f, muted).apply {
+        results.addView(label("Fiyat Avcısı · test 0.43", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3340,7 +3347,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 42\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 43\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

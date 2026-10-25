@@ -2660,8 +2660,10 @@ class MainActivity : Activity() {
                 .apply { setPadding(dp(6), dp(2), dp(6), dp(4)) })
         }
 
+        // Adetli / gramlı ürünlerde "en uygun" = birim fiyatı en düşük ilan
+        val unitBased = fm.count { unitPrice(it) != null } * 2 >= fm.size && fm.size >= 2
         // En ucuz teklif kutusu
-        if (fm.isNotEmpty()) heroCard(fm)
+        if (fm.isNotEmpty()) heroCard(fm, unitBased)
         if (familyTried && matches.isEmpty()) {
             noticeCard("Bu model sitelerde bulunamadı (satıştan kalkmış olabilir). Aşağıda aynı serinin başka yılları ve modelleri var.",
                 orange, orangeBg)
@@ -2678,8 +2680,6 @@ class MainActivity : Activity() {
         }
 
         val cheapest = fm.firstOrNull()
-        // Adetli / gramlı ürünlerde önerilen sıra: tane (kg, L) başı fiyat
-        val unitBased = fm.count { unitPrice(it) != null } * 2 >= fm.size && fm.size >= 2
         val matchSortName = when {
             sortMode != 0 -> sortNames[sortMode].lowercase(Locale("tr", "TR"))
             unitBased -> "tane / kg başı fiyata göre"
@@ -2790,8 +2790,10 @@ class MainActivity : Activity() {
     }
 
     /** En üstte büyük kutu: en ucuz aynı ürün */
-    private fun heroCard(matches: List<Offer>) {
-        val o = matches.first()
+    private fun heroCard(matches: List<Offer>, unitBased: Boolean = false) {
+        val o = if (unitBased) matches.filter { unitPrice(it) != null }.minByOrNull { unitPrice(it)!!.first } ?: matches.first()
+            else matches.first()
+        val up = if (unitBased) unitPrice(o) else null
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(greenBg, 24)
@@ -2804,7 +2806,8 @@ class MainActivity : Activity() {
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(label("En ucuz · ${o.site}", 12f, green, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(label((if (up != null) "En uygun (${up.second} başı) · " else "En ucuz · ") + o.site, 12f, green, true),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_share)
                 imageTintList = android.content.res.ColorStateList.valueOf(green)
@@ -2815,7 +2818,14 @@ class MainActivity : Activity() {
             })
             addView(bell(o))
         })
-        col.addView(label(money(o.price), 30f, green, true).apply { setSingleLine(true) })
+        if (up != null) {
+            col.addView(label(unitText(o).removePrefix("≈ "), 30f, green, true).apply { setSingleLine(true) })
+            val amt = offerUnit(o)
+            col.addView(label(money(o.price) + (amt?.let { " · ${if (it.second == "adet") tlWhole.format(it.first) + " adet" else tl.format(it.first) + " " + it.second}" } ?: ""),
+                14f, ink, true))
+        } else {
+            col.addView(label(money(o.price), 30f, green, true).apply { setSingleLine(true) })
+        }
         col.addView(label(o.title, 13f, ink).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
         val extra = mutableListOf<String>()
         if (o.seller.isNotEmpty()) extra.add("Satıcı ${o.seller}")
@@ -3400,8 +3410,15 @@ class MainActivity : Activity() {
             setPadding(dp(22), dp(8), dp(22), dp(0))
         }
         box.addView(label(title.take(120), 14f, ink))
+        // Ürün alarmında asıl ölçü: sitelerdeki en uygun ilan
+        group.firstOrNull()?.takeIf { group.size >= 2 }?.let { b ->
+            val bu = offerUnit(b)
+            box.addView(label("Şu an en uygun: ${b.site} · " +
+                (if (unit != null && bu != null) Alarms.unitText(b.price / bu.first, bu.second) + " (${money(b.price)})" else money(b.price)),
+                13f, green, true).apply { setPadding(0, dp(6), 0, 0) })
+        }
         box.addView(label(
-            (if (price != null) "Şu an: ${money(price)} · $site" else "Şu an fiyat okunamadı · $site") +
+            (if (price != null) "Dokunduğun ilan: ${money(price)} · $site" else "Şu an fiyat okunamadı · $site") +
                 (if (unit != null && price != null) " · ${Alarms.unitText(price / unit.first, unit.second)}" else "") +
                 if (available == false) " · stokta yok" else "",
             13f, muted, true
@@ -3739,7 +3756,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 50\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 51\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

@@ -58,7 +58,8 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     /** linkPattern: o sitede bir ürün sayfası linkini tanıyan kalıp */
-    private data class Site(val name: String, val linkPattern: String, val url: (String) -> String)
+    /** cats: sitenin tarandığı kategoriler (boş = hepsi). Market zinciri ayakkabı aramasında taranmaz. */
+    private data class Site(val name: String, val linkPattern: String, val cats: Set<String> = emptySet(), val url: (String) -> String)
 
     private data class Offer(
         val site: String,
@@ -113,9 +114,21 @@ class MainActivity : Activity() {
         Site("Trendyol", "-p-[0-9]") { "https://www.trendyol.com/sr?q=$it" },
         Site("Hepsiburada", "-pm?-[A-Za-z0-9]") { "https://www.hepsiburada.com/ara?q=$it" },
         Site("Amazon", "/dp/") { "https://www.amazon.com.tr/s?k=$it" },
-        Site("MediaMarkt", "/product/") { "https://www.mediamarkt.com.tr/tr/search.html?query=$it" },
-        Site("Teknosa", "-p-[0-9]") { "https://www.teknosa.com/arama/?s=$it" },
+        Site("MediaMarkt", "/product/", setOf("Elektronik", "Diğer")) { "https://www.mediamarkt.com.tr/tr/search.html?query=$it" },
+        Site("Teknosa", "-p-[0-9]", setOf("Elektronik", "Diğer")) { "https://www.teknosa.com/arama/?s=$it" },
         Site("N11", "urun[.]n11[.]com|n11[.]com/urun/") { "https://www.n11.com/arama?q=$it" },
+        Site("Pazarama", "pazarama[.]com/[^/?#]+-p-[A-Za-z0-9]+") { "https://www.pazarama.com/arama?q=$it" },
+        // Market zincirleri
+        Site("Migros", "migros[.]com[.]tr/[^/?#]+-p-[0-9a-f]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.migros.com.tr/arama?q=$it" },
+        Site("CarrefourSA", "carrefoursa[.]com/[^/?#]+-p-[0-9]{5,}", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.carrefoursa.com/search/?text=$it" },
+        Site("A101", "a101[.]com[.]tr/.+_p-[0-9]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.a101.com.tr/arama?k=$it" },
+        Site("Şok", "sokmarket[.]com[.]tr/[^/?#]+-p-[0-9]+", setOf("Market", "Bebek", "Kozmetik", "Diğer")) { "https://www.sokmarket.com.tr/arama?q=$it" },
+        // Elektronik
+        Site("Vatan", "vatanbilgisayar[.]com/[a-z0-9-]+[.]html", setOf("Elektronik")) { "https://www.vatanbilgisayar.com/arama/$it/" },
+        // Giyim, ayakkabı, spor
+        Site("Boyner", "boyner[.]com[.]tr/[^/?#]+-p-[0-9]+", setOf("Giyim", "Kozmetik")) { "https://www.boyner.com.tr/search?q=$it" },
+        Site("Flo", "flo[.]com[.]tr/(?:urun/)?[^/?#]+-[0-9]{6,}", setOf("Giyim")) { "https://www.flo.com.tr/arama?q=$it" },
+        Site("Decathlon", "decathlon[.]com[.]tr/p/.+R-p-[0-9]+", setOf("Giyim")) { "https://www.decathlon.com.tr/search?Ntt=$it" },
     )
 
     // Kimlik bulmak için hızlı taranan siteler (barkod ve kodla aramada en iyi sonuç verenler)
@@ -345,6 +358,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var siteChips: LinearLayout
     private lateinit var gearDot: View
+    private var scanSites: Set<String> = emptySet()
     private lateinit var chipsScroll: HorizontalScrollView
     private lateinit var progress: ProgressBar
     private val expanded = HashMap<String, Boolean>()
@@ -691,6 +705,11 @@ class MainActivity : Activity() {
         "Trendyol" to Color.parseColor("#F27A1A"), "Hepsiburada" to Color.parseColor("#FF6000"),
         "Amazon" to Color.parseColor("#232F3E"), "MediaMarkt" to Color.parseColor("#D7000F"),
         "Teknosa" to Color.parseColor("#1E3A8A"), "N11" to Color.parseColor("#6D28D9"),
+        "Pazarama" to Color.parseColor("#5B21B6"), "Migros" to Color.parseColor("#E8750A"),
+        "CarrefourSA" to Color.parseColor("#0055A5"), "A101" to Color.parseColor("#0093D0"),
+        "Şok" to Color.parseColor("#C99400"), "Vatan" to Color.parseColor("#C8102E"),
+        "Boyner" to Color.parseColor("#1F1F1F"), "Flo" to Color.parseColor("#D3121B"),
+        "Decathlon" to Color.parseColor("#0082C3"),
     )
 
     private fun rounded(fill: Int, radius: Int = 14, stroke: Int = 0, strokeW: Int = 1) = GradientDrawable().apply {
@@ -969,14 +988,19 @@ class MainActivity : Activity() {
 
     private fun showMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add(0, 1, 0, if (resultsScroll.visibility == View.VISIBLE) "Tarayıcıyı göster" else "Sonuçları göster")
-            menu.add(0, 2, 1, "Raporu kopyala")
-            menu.add(0, 3, 2, "Raporu paylaş")
-            menu.add(0, 4, 0, "🔔 Alarmlarım")
-            menu.add(0, 5, 0, "⚙ Ayarlar")
+            menu.add(0, 6, 0, "Barkod okut")
+            menu.add(0, 4, 0, "Alarmlarım")
+            menu.add(0, 5, 0, "Ayarlar")
+            // Teşhis araçları sadece geliştirici modunda
+            if (flag("devMode")) {
+                menu.add(0, 1, 1, if (resultsScroll.visibility == View.VISIBLE) "Tarayıcıyı göster" else "Sonuçları göster")
+                menu.add(0, 2, 2, "Raporu kopyala")
+                menu.add(0, 3, 3, "Raporu paylaş")
+            }
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     4 -> showAlarms()
+                    6 -> scanBarcode()
                     5 -> showSettings()
                     1 -> toggleBrowser()
                     2 -> copyReport()
@@ -1103,7 +1127,7 @@ class MainActivity : Activity() {
     /** Arama sırasında her sitenin durumu: bekliyor / bitti (ürün sayısı) / ilgisiz / sorun */
     private fun updateSiteChips() {
         siteChips.removeAllViews()
-        for (s in sites.filter { siteOn(it.name) }) {
+        for (s in sites.filter { siteOn(it.name) && (scanSites.isEmpty() || it.name in scanSites) }) {
             val line = siteSummary.lastOrNull { it.startsWith(s.name + ":") }
             val (txt, fg, bg) = when {
                 line == null -> Triple("${s.name} …", muted, greyBg)
@@ -1138,7 +1162,7 @@ class MainActivity : Activity() {
     private var finished = false
     private var savedExact: Set<String> = emptySet()
     private var resolveSearchQuery = ""   // tanıma adımında sitelere sorulan yazı
-    private val poolSize = 6
+    private val poolSize = 8
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWeb(): WebView {
@@ -1299,8 +1323,10 @@ class MainActivity : Activity() {
 
     /** Siteleri aynı anda tarar; her site bitince [onEach], hepsi bitince [onAll] */
     private fun runSites(all: List<Site>, q: String, label: String, onEach: () -> Unit, onAll: () -> Unit) {
-        // Ayarlardan kapatılan siteler taranmaz
-        val list = all.filter { siteOn(it.name) }
+        // Ayarlardan kapatılan siteler ve aramanın kategorisiyle ilgisi olmayan siteler taranmaz
+        val cat = detectCategory()
+        val list = all.filter { siteOn(it.name) && (it.cats.isEmpty() || cat == "Diğer" || cat in it.cats) }
+        scanSites = list.map { it.name }.toSet()
         if (list.isEmpty()) {
             siteSummary.add("Hiçbir site açık değil (Ayarlar → Siteler)")
             onAll()
@@ -1308,26 +1334,20 @@ class MainActivity : Activity() {
         }
         val gen = ++phaseGen
         var left = list.size
+        var next = 0
         val t0 = android.os.SystemClock.elapsedRealtime()
-        status.text = "$label: ${list.size} site aynı anda taranıyor…"
+        status.text = "$label: ${list.size} site taranıyor…"
         val done = BooleanArray(list.size)
+        val viewOf = HashMap<Int, WebView>()
         var phaseDone = false
         val finish = { if (!phaseDone) { phaseDone = true; onAll() } }
-        // Mağazada hız: siteler 12 saniyede bitmediyse ve en az 4'ü bittiyse yavaş olanlar beklenmez
-        handler.postDelayed({
-            if (gen == phaseGen && !phaseDone && list.size - left >= 4) {
-                list.forEachIndexed { i, s ->
-                    if (!done[i]) {
-                        slots.getValue(pool[i]).gen++
-                        pool[i].stopLoading()
-                        siteSummary.add("${s.name}: yavaş — beklenmedi (12 sn)")
-                    }
-                }
-                finish()
-            }
-        }, 12000)
-        list.forEachIndexed { i, site ->
-            val v = pool[i]
+        // Sırayla: boşalan tarayıcı sıradaki siteyi alır (aynı anda en çok ${poolSize} site)
+        lateinit var launch: (WebView) -> Unit
+        launch = launch@{ v ->
+            if (next >= list.size || gen != phaseGen || phaseDone) return@launch
+            val i = next++
+            val site = list[i]
+            viewOf[i] = v
             runSite(v, site, q, simpleUsed = false, reloaded = false) { d, simpleUsed ->
                 if (gen == phaseGen && !phaseDone) {
                     done[i] = true
@@ -1341,10 +1361,23 @@ class MainActivity : Activity() {
                     status.text = "$label: ${list.size - left}/${list.size} site tamam · " +
                         elapsedText(android.os.SystemClock.elapsedRealtime() - startedAt)
                     onEach()
-                    if (left == 0) finish()
+                    if (left == 0) finish() else launch(v)
                 }
             }
         }
+        pool.forEach { launch(it) }
+        // Mağazada hız: 14 saniyede bitmeyen siteler beklenmez (en az 4 site bittiyse)
+        handler.postDelayed({
+            if (gen == phaseGen && !phaseDone && list.size - left >= 4) {
+                list.forEachIndexed { i, s ->
+                    if (!done[i]) {
+                        viewOf[i]?.let { v -> slots.getValue(v).gen++; v.stopLoading() }
+                        siteSummary.add("${s.name}: yavaş — beklenmedi (14 sn)")
+                    }
+                }
+                finish()
+            }
+        }, 14000)
     }
 
     private fun stopAll() {
@@ -2639,7 +2672,7 @@ class MainActivity : Activity() {
             nothingElse || filterText.isNotBlank()) {
             applySort(collapse(rest).sortedBy { it.price }).forEach { offerRow(it, false) }
         }
-        if (siteSummary.isNotEmpty()) section("sites", "Site ayrıntıları", siteSummary.size, muted, false) {
+        if (siteSummary.isNotEmpty() && flag("devMode")) section("sites", "Site ayrıntıları", siteSummary.size, muted, false) {
             siteSummary.forEach { results.addView(label("• $it", 12f, muted).apply { setPadding(dp(6), dp(3), dp(6), dp(3)) }) }
         }
 
@@ -2717,6 +2750,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(label("En ucuz · ${o.site}", 12f, green, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_share)
+                imageTintList = android.content.res.ColorStateList.valueOf(green)
+                contentDescription = "Sonucu paylaş"
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+                setOnClickListener { shareResult(matches) }
+            })
             addView(bell(o))
         })
         col.addView(label(money(o.price), 30f, green, true).apply { setSingleLine(true) })
@@ -2753,6 +2794,37 @@ class MainActivity : Activity() {
         results.addView(card, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(2), dp(4), dp(2), dp(6)) })
+    }
+
+    /** En ucuz sonucu ve diğer sitelerdeki fiyatları WhatsApp vb. ile paylaş */
+    private fun shareResult(matches: List<Offer>) {
+        val o = matches.first()
+        val sb = StringBuilder()
+        sb.append(o.title).append("\n\n")
+        sb.append("En ucuz: ").append(money(o.price)).append(" · ").append(o.site)
+        shipText(o)?.let { sb.append(" (").append(it.lowercase(Locale("tr", "TR"))).append(")") }
+        sb.append("\n").append(o.link).append("\n")
+        // Her siteden en ucuz ilan
+        val perSite = matches.drop(1).groupBy { it.site }.values.map { g -> g.minByOrNull { it.price }!! }
+            .filter { it.site != o.site }.sortedBy { it.price }.take(5)
+        if (perSite.isNotEmpty()) {
+            sb.append("\nDiğer siteler:\n")
+            perSite.forEach { sb.append("• ").append(it.site).append(": ").append(money(it.price)).append("\n") }
+        }
+        val hist = History.product(this, productKey())
+        if (hist.size >= 2) sb.append("\nSon ${History.today() - hist.first().first + 1} günün en düşüğü: ")
+            .append(money(hist.minOf { it.second })).append("\n")
+        sb.append("\nFiyat Avcısı ile bulundu")
+        shareText(sb.toString())
+    }
+
+    private fun shareText(t: String) {
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, t)
+            }, "Paylaş"))
+        } catch (e: Exception) {}
     }
 
     /** Ürünün geçmiş anahtarı: seçilen kimlik ya da aramanın sade hali */
@@ -2879,6 +2951,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(12), dp(4), dp(12))
             setOnClickListener { openLink(o) }
+            // Uzun basınca bu ilanı paylaş
+            setOnLongClickListener { shareText("${o.title}\n${money(o.price)} · ${o.site}\n${o.link}"); true }
         }
         row.addView(photo(o, 60), LinearLayout.LayoutParams(dp(60), dp(60)).apply { marginEnd = dp(12) })
 
@@ -3194,6 +3268,11 @@ class MainActivity : Activity() {
             showSettings()
         }
 
+        // Geliştirici modu: rapor kopyalama, tarayıcıyı görme, site ayrıntıları
+        val dev = settingsCard("Geliştirici")
+        switchRow(dev, "Geliştirici modu", "Rapor kopyalama, tarayıcıyı gösterme ve site ayrıntıları menüde görünür",
+            flag("devMode")) { v -> settings.edit().putBoolean("devMode", v).apply() }
+
         results.addView(label("Fiyat Avcısı · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
@@ -3456,7 +3535,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 46\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 47\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

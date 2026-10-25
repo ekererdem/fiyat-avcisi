@@ -807,7 +807,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when {
             resultsScroll.visibility != View.VISIBLE -> toggleBrowser()
-            running -> { stopAll(); running = false; progress.visibility = View.GONE; showHome() }
+            running -> { stopAll(); running = false; progress.visibility = View.GONE; goHome() }
             screen == "settings" || screen == "alarms" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
@@ -823,6 +823,9 @@ class MainActivity : Activity() {
 
     /** Sonuçları kapatıp ana sayfaya dön */
     private fun goHome() {
+        // Arama sürüyorsa durdur: ana sayfada site çipleri ve "taranıyor" yazısı kalmasın
+        if (running) { stopAll(); running = false }
+        progress.visibility = View.GONE
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         status.visibility = View.GONE

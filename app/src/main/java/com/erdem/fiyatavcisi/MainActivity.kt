@@ -344,6 +344,7 @@ class MainActivity : Activity() {
     private lateinit var results: LinearLayout
     private lateinit var status: TextView
     private lateinit var siteChips: LinearLayout
+    private lateinit var gearDot: View
     private lateinit var chipsScroll: HorizontalScrollView
     private lateinit var progress: ProgressBar
     private val expanded = HashMap<String, Boolean>()
@@ -594,10 +595,25 @@ class MainActivity : Activity() {
         } catch (e: Exception) {}
         showLastCrash()
         handleShare(intent)
-        // Yeni sürüm var mı: en çok 3 saatte bir, arka planda
-        if (flag("autoUpdate", true) && System.currentTimeMillis() - Update.lastCheck(this) > 3 * 3_600_000L) {
-            Update.check(this) { _, _, _ -> if (screen == "home" && !running) showHome() }
+    }
+
+    /** Kopilot'taki gibi: her açılışta / öne gelişte GitHub'a bakar (en sık 3 dakikada bir) */
+    private var lastUpdateLook = 0L
+    private fun maybeCheckUpdate() {
+        updateGearDot()
+        if (!flag("autoUpdate", true)) return
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateLook < 3 * 60_000L) return
+        lastUpdateLook = now
+        Update.check(this) { _, _, _ ->
+            updateGearDot()
+            if (screen == "home" && !running) showHome()
         }
+    }
+
+    /** Ayarlar simgesindeki kırmızı nokta: yeni sürüm varken görünür */
+    private fun updateGearDot() {
+        if (::gearDot.isInitialized) gearDot.visibility = if (Update.pending(this) != null) View.VISIBLE else View.GONE
     }
 
     /** Güncellemeyi indirip kurar; ilerlemeyi verilen yazıda gösterir */
@@ -631,6 +647,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        maybeCheckUpdate()
         // İzin ekranından dönünce durumları yenile
         if (screen == "settings") showSettings()
     }
@@ -767,7 +784,18 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) })
         header.addView(label("Fiyat Avcısı", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(iconButton(R.drawable.ic_bell, "Alarmlar") { showAlarms() })
-        header.addView(iconButton(R.drawable.ic_gear, "Ayarlar") { showSettings() })
+        // Ayarlar simgesi + yeni sürüm noktası
+        val gearBox = FrameLayout(this)
+        gearBox.addView(iconButton(R.drawable.ic_gear, "Ayarlar") { showSettings() })
+        gearDot = View(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c("#E5484D")); setStroke(dp(2), paper) }
+            visibility = View.GONE
+        }
+        gearBox.addView(gearDot, FrameLayout.LayoutParams(dp(12), dp(12)).apply {
+            gravity = Gravity.TOP or Gravity.END
+            setMargins(0, dp(7), dp(7), 0)
+        })
+        header.addView(gearBox)
         val menuBtn = iconButton(R.drawable.ic_more, "Menü") {}
         menuBtn.setOnClickListener { showMenu(menuBtn) }
         header.addView(menuBtn)
@@ -3414,7 +3442,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 44\nGiriş: ").append(userInput)
+        report.append("FİYAT AVCISI · DENEME 45\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")

@@ -359,6 +359,126 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var siteChips: LinearLayout
     private lateinit var gearDot: View
+    private var avatarView: TextView? = null
+
+    // ---------- Profil (telefonda saklanır) ----------
+    private fun profileName() = settings.getString("profileName", "").orEmpty()
+    private fun profileMail() = settings.getString("profileMail", "").orEmpty()
+
+    private fun initials(): String {
+        val n = profileName().trim().ifEmpty { profileMail().substringBefore('@') }
+        if (n.isEmpty()) return "FA"
+        val parts = n.split(Regex("[\\s._-]+")).filter { it.isNotEmpty() }
+        return (parts.take(2).joinToString("") { it.take(1) }).uppercase(Locale("tr", "TR"))
+    }
+
+    /** Soldan açılan menü: profil, sayfalar, ayarlar */
+    private fun showDrawer() {
+        val d = android.app.Dialog(this, android.R.style.Theme_Material_NoActionBar)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(surface)
+            setPadding(dp(18), dp(36), dp(18), dp(18))
+        }
+        // Profil başlığı
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), dp(16))
+            setOnClickListener { d.dismiss(); profileDialog() }
+        }
+        head.addView(label(initials(), 20f, brand, true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#111111")) }
+        }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(14) })
+        val who = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (profileMail().isEmpty() && profileName().isEmpty()) {
+            who.addView(label("Giriş yap", 17f, ink, true))
+            who.addView(label("E-posta adresinle profil oluştur", 13f, muted))
+        } else {
+            who.addView(label(profileName().ifEmpty { profileMail().substringBefore('@') }, 17f, ink, true))
+            if (profileMail().isNotEmpty()) who.addView(label(profileMail(), 13f, muted))
+            who.addView(label("Profili düzenle", 12f, gold, true).apply { setPadding(0, dp(3), 0, 0) })
+        }
+        head.addView(who, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        panel.addView(head)
+        panel.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+
+        fun item(icon: Int, text: String, badge: String? = null, badgeColor: Int = gold, action: () -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(6), dp(14), dp(6), dp(14))
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(greyBg), null, rounded(Color.WHITE, 12))
+                setOnClickListener { d.dismiss(); action() }
+            }
+            row.addView(ImageView(this).apply {
+                setImageResource(icon); imageTintList = android.content.res.ColorStateList.valueOf(ink)
+            }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(16) })
+            row.addView(label(text, 16f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            badge?.let { row.addView(pill(it, Color.WHITE, badgeColor, bold = true)) }
+            panel.addView(row)
+        }
+        item(R.drawable.ic_search, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
+        item(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() }
+        val ac = try { Alarms.load(this).size } catch (e: Exception) { 0 }
+        item(R.drawable.ic_bell, "Alarmlarım", if (ac > 0) "$ac" else null) { showAlarms() }
+        item(R.drawable.ic_gear, "Ayarlar", if (Update.pending(this) != null) "Güncelleme var" else null, c("#E5484D")) { showSettings() }
+        if (flag("devMode")) {
+            panel.addView(label("Geliştirici", 12f, muted, true).apply { setPadding(dp(6), dp(14), 0, dp(2)) })
+            item(R.drawable.ic_more, if (resultsScroll.visibility == View.VISIBLE) "Tarayıcıyı göster" else "Sonuçları göster") { toggleBrowser() }
+            item(R.drawable.ic_more, "Raporu kopyala") { copyReport() }
+            item(R.drawable.ic_share, "Raporu paylaş") { shareReport() }
+        }
+        panel.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        panel.addView(label("Fiyat Avcısı ${Update.currentName(this)}", 12f, muted).apply { setPadding(dp(6), 0, 0, 0) })
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(110, 0, 0, 0))
+            setOnClickListener { d.dismiss() }
+        }
+        panel.isClickable = true
+        root.addView(panel, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.8).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
+        d.setContentView(root)
+        d.window?.let { w ->
+            w.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            w.setWindowAnimations(android.R.style.Animation_Translucent)
+        }
+        panel.translationX = -resources.displayMetrics.widthPixels * 0.8f
+        d.setOnShowListener { panel.animate().translationX(0f).setDuration(180).start() }
+        d.show()
+    }
+
+    /** Profil: ad ve e-posta (telefonda saklanır) */
+    private fun profileDialog() {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
+        val name = EditText(this).apply { hint = "Adın"; setText(profileName()); setSingleLine() }
+        val mail = EditText(this).apply {
+            hint = "E-posta"; setText(profileMail()); setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        }
+        box.addView(name); box.addView(mail)
+        box.addView(label("Bilgiler sadece bu telefonda saklanır.", 12f, muted).apply { setPadding(0, dp(8), 0, 0) })
+        val b = android.app.AlertDialog.Builder(this)
+            .setTitle(if (profileMail().isEmpty()) "Giriş yap" else "Profil")
+            .setView(box)
+            .setPositiveButton("Kaydet") { _, _ ->
+                val m = mail.text.toString().trim()
+                if (m.isNotEmpty() && !android.util.Patterns.EMAIL_ADDRESS.matcher(m).matches()) {
+                    Toast.makeText(this, "E-posta adresi geçersiz", Toast.LENGTH_LONG).show(); return@setPositiveButton
+                }
+                settings.edit().putString("profileName", name.text.toString().trim()).putString("profileMail", m).apply()
+                avatarView?.text = initials()
+            }
+            .setNegativeButton("Vazgeç", null)
+        if (profileMail().isNotEmpty() || profileName().isNotEmpty()) b.setNeutralButton("Çıkış yap") { _, _ ->
+            settings.edit().remove("profileName").remove("profileMail").apply()
+            avatarView?.text = initials()
+        }
+        b.show()
+    }
     private var scanSites: Set<String> = emptySet()
     private var devTaps = 0
     private lateinit var chipsScroll: HorizontalScrollView
@@ -849,27 +969,21 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(10), dp(10))
         }
-        header.addView(label("FA", 15f, brand, true).apply {
+        // Sol üst: profil düğmesi (baş harfler); menü buradan açılır. Yeni sürüm varsa üstünde kırmızı nokta yanar
+        val avatarBox = FrameLayout(this).apply { setOnClickListener { showDrawer() } }
+        avatarView = label(initials(), 15f, brand, true).apply {
             gravity = Gravity.CENTER
-            background = rounded(if (dark) c("#253341") else c("#111111"), 10)
-        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) })
-        header.addView(label("Fiyat Avcısı", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(iconButton(R.drawable.ic_bell, "Alarmlar") { showAlarms() })
-        // Ayarlar simgesi + yeni sürüm noktası
-        val gearBox = FrameLayout(this)
-        gearBox.addView(iconButton(R.drawable.ic_gear, "Ayarlar") { showSettings() })
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#111111")) }
+        }
+        avatarBox.addView(avatarView, FrameLayout.LayoutParams(dp(40), dp(40)))
         gearDot = View(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c("#E5484D")); setStroke(dp(2), paper) }
             visibility = View.GONE
         }
-        gearBox.addView(gearDot, FrameLayout.LayoutParams(dp(12), dp(12)).apply {
-            gravity = Gravity.TOP or Gravity.END
-            setMargins(0, dp(7), dp(7), 0)
-        })
-        header.addView(gearBox)
-        val menuBtn = iconButton(R.drawable.ic_more, "Menü") {}
-        menuBtn.setOnClickListener { showMenu(menuBtn) }
-        header.addView(menuBtn)
+        avatarBox.addView(gearDot, FrameLayout.LayoutParams(dp(13), dp(13)).apply { gravity = Gravity.TOP or Gravity.END })
+        header.addView(avatarBox, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
+        header.addView(label("Fiyat Avcısı", 20f, ink, true).apply { setOnClickListener { showDrawer() } },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header)
 
         // Arama kutusu: hap biçimi, içinde barkod ve Ara düğmeleri
@@ -1064,7 +1178,7 @@ class MainActivity : Activity() {
         card.addView(label("Ne arıyorsun?", 20f, ink, true))
         card.addView(label(
             "Ürünün adını, model kodunu ya da barkod numarasını yaz. Trendyol, Hepsiburada, Amazon, MediaMarkt, " +
-                "Teknosa ve N11 aynı anda taranır; aynı ürünü ucuzdan pahalıya sıralar, başka paket ve modelleri ayırır.",
+                "Teknosa, N11, market zincirleri ve daha fazlası aynı anda taranır; aynı ürünü ucuzdan pahalıya sıralar, başka paket ve modelleri ayırır.",
             14f, muted
         ).apply { setPadding(0, dp(6), 0, 0) })
         results.addView(card, LinearLayout.LayoutParams(

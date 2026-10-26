@@ -3962,6 +3962,17 @@ class MainActivity : Activity() {
         })
         results.addView(head)
 
+        // Genel ayarlar: tema ve takip/alarm kontrol sıklığı
+        val gen = settingsCard("Genel ayarlar")
+        choiceRow(gen, "Tema", "Koyu tema gece göz yormaz", listOf("Telefona göre", "Açık", "Koyu"),
+            settings.getInt("theme", 0)) { i ->
+            settings.edit().putInt("theme", i).apply()
+            handler.post { recreate() }
+        }
+        val hours = listOf(1, 2, 4, 6, 12)
+        choiceRow(gen, "Fiyat kontrol sıklığı", "Takip ve alarmdaki ürünler bu aralıkla kontrol edilir; sık kontrol biraz daha pil harcar",
+            hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
+
         // İzinler
         val perm = settingsCard("İzinler")
         val nm = getSystemService(android.app.NotificationManager::class.java)
@@ -4014,13 +4025,6 @@ class MainActivity : Activity() {
         }
         src.addView(siteFlow)
 
-        // Görünüm
-        val look = settingsCard("Görünüm")
-        choiceRow(look, "Tema", "Koyu tema gece göz yormaz", listOf("Telefona göre", "Açık", "Koyu"),
-            settings.getInt("theme", 0)) { i ->
-            settings.edit().putInt("theme", i).apply()
-            handler.post { recreate() }
-        }
 
         // Kurallar: genel ya da kategoriye özel
         val rules = settingsCard("Kurallar (sonuçlarda gizlenenler)")
@@ -4066,12 +4070,6 @@ class MainActivity : Activity() {
             }
         }
 
-        // Alarmlar
-        val al = settingsCard("Fiyat alarmları")
-        val hours = listOf(1, 2, 4, 6, 12)
-        choiceRow(al, "Kontrol sıklığı", "Sık kontrol biraz daha pil harcar",
-            hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
-        actionRow(al, "Alarmlarım", null, "${productCount(Alarms.load(this))} ürün takipte", "Aç") { showAlarms() }
 
         results.addView(label("İzci · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER

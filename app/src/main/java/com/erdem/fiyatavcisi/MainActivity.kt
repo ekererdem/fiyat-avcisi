@@ -1089,6 +1089,8 @@ class MainActivity : Activity() {
                 letterSpacing = -0.03f
                 includeFontPadding = false
             })
+            // Logo kadar boşluk: yazı ekranın tam ortasında kalsın, logo başında dursun
+            addView(View(this@MainActivity), LinearLayout.LayoutParams(dp(48), 1))
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })
         root.addView(header)
 

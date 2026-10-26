@@ -1333,6 +1333,15 @@ class MainActivity : Activity() {
                 })
             }
         results.addView(flow)
+        if (recent.isNotEmpty()) results.addView(label("Arama geçmişini temizle", 13f, muted, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(28), dp(12), dp(12))
+            setOnClickListener {
+                prefs.edit().remove("recent").apply()
+                Toast.makeText(this@MainActivity, "Arama geçmişi temizlendi", Toast.LENGTH_SHORT).show()
+                showHome()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     /** Ana sayfa: takip edilen ürünler (ürün alarmları önce), en fazla 3 kart */
@@ -3953,33 +3962,6 @@ class MainActivity : Activity() {
         })
         results.addView(head)
 
-        // Güncelleme
-        val up = settingsCard(if (Update.pending(this) != null) "Güncelleme · yeni sürüm var" else "Güncelleme")
-        val pend = Update.pending(this)
-        actionRow(up, "Sürüm ${Update.currentName(this)}", null,
-            if (pend != null) "Yeni sürüm var: $pend" else "Son denetim: " +
-                (if (Update.lastCheck(this) > 0) java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
-                    .format(java.util.Date(Update.lastCheck(this))) else "hiç"),
-            if (pend != null) "Güncelle" else "Denetle") {
-            if (pend != null) {
-                startUpdate(null)
-                Toast.makeText(this, "Güncelleme indiriliyor, bitince telefon onay isteyecek", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this, "Denetleniyor…", Toast.LENGTH_SHORT).show()
-                Update.check(this) { name, code, err ->
-                    Toast.makeText(this, when {
-                        err != null -> "Denetlenemedi: $err"
-                        code > Update.current(this) -> "Yeni sürüm var: $name"
-                        else -> "Uygulama güncel"
-                    }, Toast.LENGTH_LONG).show()
-                    if (screen == "settings") showSettings()
-                }
-            }
-        }
-        switchRow(up, "Açılışta otomatik denetle", "Yeni sürüm varsa ana sayfada haber verir", flag("autoUpdate", true)) { v ->
-            settings.edit().putBoolean("autoUpdate", v).apply()
-        }
-
         // İzinler
         val perm = settingsCard("İzinler")
         val nm = getSystemService(android.app.NotificationManager::class.java)
@@ -4010,10 +3992,27 @@ class MainActivity : Activity() {
         actionRow(perm, "Uygulama ayarları", null, "Android'in bu uygulama için bütün ayarları", "Aç") { openIntent(appDetails()) }
 
         // Siteler
+        // Siteler: dokunarak aç/kapat, yan yana küçük çipler
         val src = settingsCard("Taranan siteler")
+        src.addView(label("Dokunarak aç ya da kapat. Siteler aramanın kategorisine göre ayrıca seçilir.", 12f, muted).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
+        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(6)) }
         sites.forEach { site ->
-            switchRow(src, site.name, "", siteOn(site.name)) { v -> settings.edit().putBoolean("site_${site.name}", v).apply() }
+            val chip = TextView(this).apply { textSize = 13f; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+            fun paint() {
+                val on = siteOn(site.name)
+                chip.text = if (on) "✓ ${site.name}" else site.name
+                chip.setTextColor(if (on) green else muted)
+                chip.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                chip.background = if (on) rounded(greenBg, 18) else rounded(paper, 18, line)
+            }
+            paint()
+            chip.setOnClickListener {
+                settings.edit().putBoolean("site_${site.name}", !siteOn(site.name)).apply()
+                paint()
+            }
+            siteFlow.addView(chip)
         }
+        src.addView(siteFlow)
 
         // Görünüm
         val look = settingsCard("Görünüm")
@@ -4073,16 +4072,6 @@ class MainActivity : Activity() {
         choiceRow(al, "Kontrol sıklığı", "Sık kontrol biraz daha pil harcar",
             hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
         actionRow(al, "Alarmlarım", null, "${productCount(Alarms.load(this))} ürün takipte", "Aç") { showAlarms() }
-
-        // Hafıza
-        val mem = settingsCard("Hafıza")
-        switchRow(mem, "Seçimlerimi hatırla", "\"Hangisini kastettin?\" sorusundaki seçimin bir dahaki aramada sorulmaz",
-            flag("remember")) { v -> settings.edit().putBoolean("remember", v).apply() }
-        actionRow(mem, "Son aramaları temizle", null, "${recentSearches().size} arama kayıtlı", "Temizle") {
-            prefs.edit().remove("recent").apply()
-            Toast.makeText(this, "Son aramalar silindi", Toast.LENGTH_SHORT).show()
-            showSettings()
-        }
 
         results.addView(label("İzci · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER

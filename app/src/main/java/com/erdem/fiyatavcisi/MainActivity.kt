@@ -208,7 +208,7 @@ class MainActivity : Activity() {
     private var acceptedMods: Set<String> = emptySet()
     private var requiredSeries: Set<String> = emptySet()
     private val settings by lazy { getSharedPreferences("ayarlar", Context.MODE_PRIVATE) }
-    private fun flag(k: String, def: Boolean = false) = settings.getBoolean(k, def)
+    private fun flag(k: String, def: Boolean = false) = if (k == "devMode") false else settings.getBoolean(k, def)
     private fun siteOn(name: String) = settings.getBoolean("site_$name", true)
     private var screen = "home"           // home / results / alarms / settings
         set(v) { field = v; updateNav() }
@@ -235,6 +235,15 @@ class MainActivity : Activity() {
         }
         fun item(key: String, icon: Int, text: String, action: () -> Unit) {
             val iv = ImageView(this).apply { setImageResource(icon) }
+            // Ayarlar simgesinde yeni sürüm noktası
+            val iconView: View = if (key != "settings") iv else FrameLayout(this).apply {
+                addView(iv, FrameLayout.LayoutParams(dp(24), dp(24)))
+                gearDot = View(this@MainActivity).apply {
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c("#E5484D")); setStroke(dp(2), surface) }
+                    visibility = View.GONE
+                }
+                addView(gearDot, FrameLayout.LayoutParams(dp(11), dp(11)).apply { gravity = Gravity.TOP or Gravity.END })
+            }
             val tv = label(text, 11f, muted, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(3), 0, 0) }
             navBar.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -244,16 +253,17 @@ class MainActivity : Activity() {
                 background = android.graphics.drawable.RippleDrawable(
                     android.content.res.ColorStateList.valueOf(greyBg), null, rounded(Color.WHITE, 12))
                 setOnClickListener { action() }
-                addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+                addView(iconView, LinearLayout.LayoutParams(dp(24), dp(24)))
                 addView(tv)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             navItems.add(Triple(key, iv, tv))
         }
         item("home", R.drawable.ic_home, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
-        item("scan", R.drawable.ic_barcode, "Barkod") { scanBarcode() }
-        item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms() }
+        item("watch", R.drawable.ic_watch, "Takip") { showAlarms("watch") }
+        item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms("alarms") }
         item("settings", R.drawable.ic_gear, "Ayarlar") { showSettings() }
         updateNav()
+        updateGearDot()
         return navBar
     }
     private val categories = listOf("Elektronik", "Market", "Kozmetik", "Giyim", "Bebek", "Diğer")
@@ -889,7 +899,7 @@ class MainActivity : Activity() {
         when {
             resultsScroll.visibility != View.VISIBLE -> toggleBrowser()
             running -> { stopAll(); running = false; progress.visibility = View.GONE; goHome() }
-            screen == "settings" || screen == "alarms" -> {
+            screen == "settings" || screen == "alarms" || screen == "watch" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
                     chipsScroll.visibility = if (running) View.VISIBLE else View.GONE
@@ -1051,39 +1061,26 @@ class MainActivity : Activity() {
         val header = FrameLayout(this).apply {
             setPadding(dp(16), dp(14), dp(16), dp(10))
         }
-        // Sol üst: profil düğmesi (baş harfler); menü buradan açılır. Yeni sürüm varsa üstünde kırmızı nokta yanar
-        val avatarBox = FrameLayout(this).apply { setOnClickListener { showDrawer() } }
-        avatarView = label(initials(), 15f, brand, true).apply {
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#111111")) }
-        }
-        avatarBox.addView(avatarView, FrameLayout.LayoutParams(dp(40), dp(40)))
-        gearDot = View(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c("#E5484D")); setStroke(dp(2), paper) }
-            visibility = View.GONE
-        }
-        avatarBox.addView(gearDot, FrameLayout.LayoutParams(dp(13), dp(13)).apply { gravity = Gravity.TOP or Gravity.END })
-        header.addView(avatarBox, FrameLayout.LayoutParams(dp(40), dp(40)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
-        val brandMark = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            contentDescription = "İzci"
+        // Sol üst: oyma İzci logosu (yuvarlak içinde); ortada marka yazısı. Dokununca ana sayfa.
+        header.addView(FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#15202B")) }
+            contentDescription = "Ana sayfa"
             setOnClickListener { if (!running) goHome() }
-        }
-        brandMark.addView(ImageView(this).apply {
-            setImageResource(R.drawable.ic_logo)
-            imageTintList = android.content.res.ColorStateList.valueOf(if (dark) brand else c("#C98A0B"))
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(8) })
-        brandMark.addView(TextView(this).apply {
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_logo)
+                imageTintList = android.content.res.ColorStateList.valueOf(brand)
+            }, FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER })
+        }, FrameLayout.LayoutParams(dp(40), dp(40)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+        header.addView(TextView(this).apply {
             text = "İzci"
             textSize = 26f
             setTextColor(ink)
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
             letterSpacing = -0.01f
             includeFontPadding = false
-        })
-        header.addView(brandMark, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })
+            gravity = Gravity.CENTER
+            setOnClickListener { if (!running) goHome() }
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })
         root.addView(header)
 
         // Arama kutusu: hap biçimi, içinde barkod ve Ara düğmeleri
@@ -1340,7 +1337,7 @@ class MainActivity : Activity() {
             addView(label("Takip ettiklerin", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (total > 0) addView(label("Tümü · $total", 14f, gold, true).apply {
                 setPadding(dp(8), dp(6), 0, dp(6))
-                setOnClickListener { showAlarms() }
+                setOnClickListener { showAlarms(if (all.all { it.watch }) "watch" else "alarms") }
             })
         })
         val lp = { LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) } }
@@ -1365,13 +1362,13 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 background = rounded(surface, 16, line)
                 setPadding(dp(16), dp(14), dp(16), dp(14))
-                setOnClickListener { showAlarms() }
+                setOnClickListener { showAlarms(if (best.watch) "watch" else "alarms") }
             }
             val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP }
             top.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(label(best.groupName.ifEmpty { best.title }, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-                addView(label("Ürün alarmı · ${items.size} site · en uygun ${best.site}", 13f, muted).apply { setPadding(0, dp(3), 0, 0) })
+                addView(label((if (best.watch) "Takipte" else "Ürün alarmı") + " · ${items.size} site · en uygun ${best.site}", 13f, muted).apply { setPadding(0, dp(3), 0, 0) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             Alarms.metric(best)?.let { m ->
                 top.addView(LinearLayout(this).apply {
@@ -1389,7 +1386,7 @@ class MainActivity : Activity() {
             val t = if (best.unitTarget > 0) best.unitTarget else best.target
             card.addView(FlowLayout(this, dp(6)).apply {
                 setPadding(0, dp(8), 0, 0)
-                addView(pill(if (t > 0) "Hedef ${fmt(t)}" else "Her ucuzlamada", brand, amberBg, size = 12f))
+                addView(pill(if (best.watch) "Sadece takip" else if (t > 0) "Hedef ${fmt(t)}" else "Her ucuzlamada", brand, amberBg, size = 12f))
             })
             results.addView(card, lp())
             shown++
@@ -1401,7 +1398,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 background = rounded(surface, 16, line)
                 setPadding(dp(14), dp(12), dp(16), dp(12))
-                setOnClickListener { showAlarms() }
+                setOnClickListener { showAlarms(if (a.watch) "watch" else "alarms") }
             }
             card.addView(ImageView(this).apply {
                 background = rounded(greyBg, 10)
@@ -1413,7 +1410,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 addView(label(a.title, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
                 addView(label(a.site + when (a.inStock) { false -> " · stokta yok"; true -> " · stokta"; else -> "" } +
-                    when { a.unitTarget > 0 || a.target > 0 -> " · hedefli"; else -> " · her düşüşte" }, 13f, muted)
+                    when { a.watch -> " · takipte"; a.unitTarget > 0 || a.target > 0 -> " · hedefli"; else -> " · her düşüşte" }, 13f, muted)
                     .apply { setPadding(0, dp(3), 0, 0) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             card.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 16f,
@@ -3739,18 +3736,7 @@ class MainActivity : Activity() {
             showSettings()
         }
 
-        // Geliştirici modu gizli: sürüm yazısına 7 kez dokununca açılır/kapanır
-        results.addView(label("İzci · ${Update.currentName(this)}" + if (flag("devMode")) " · geliştirici" else "", 12f, muted).apply {
-            setOnClickListener {
-                devTaps++
-                if (devTaps >= 7) {
-                    devTaps = 0
-                    val on = !flag("devMode")
-                    settings.edit().putBoolean("devMode", on).apply()
-                    Toast.makeText(this@MainActivity, if (on) "Geliştirici modu açıldı" else "Geliştirici modu kapandı", Toast.LENGTH_SHORT).show()
-                    showSettings()
-                }
-            }
+        results.addView(label("İzci · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3915,6 +3901,12 @@ class MainActivity : Activity() {
             isChecked = available == false
         }
         box.addView(stock)
+        val watchOnly = android.widget.CheckBox(this).apply {
+            text = "Sadece takip et (bildirim gönderme)"
+            setTextColor(ink)
+            isChecked = alarmView == "watch" && screen == "watch"
+        }
+        box.addView(watchOnly)
         box.addView(label("Fiyatlar ${Alarms.hours(this)} saatte bir kontrol edilir.", 12f, muted)
             .apply { setPadding(0, dp(6), 0, 0) })
         val existing = Alarms.load(this).firstOrNull { it.link.substringBefore('?') == link.substringBefore('?') }
@@ -3938,10 +3930,11 @@ class MainActivity : Activity() {
                             lastCheck = 0L, status = "henüz kontrol edilmedi",
                             unitAmount = if (byUnit) cu?.first ?: 0.0 else 0.0, unitName = if (byUnit) cu?.second.orEmpty() else "",
                             unitTarget = if (byUnit) t else 0.0, groupId = gid, groupName = name, groupQuery = userInput,
+                            watch = watchOnly.isChecked,
                         )
                     }
                     Alarms.addGroup(this, items)
-                    Toast.makeText(this, "Ürün alarmı kuruldu: ${items.size} sitede takip", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, (if (watchOnly.isChecked) "Takibe alındı: " else "Ürün alarmı kuruldu: ") + "${items.size} sitede takip", Toast.LENGTH_SHORT).show()
                 } else {
                     val p = price ?: 0.0
                     Alarms.add(this, Alarm(
@@ -3950,11 +3943,11 @@ class MainActivity : Activity() {
                         target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = available,
                         lastCheck = 0L, status = "henüz kontrol edilmedi",
                         unitAmount = if (unit != null) unit.first else 0.0, unitName = unit?.second.orEmpty(),
-                        unitTarget = if (byUnit) t else 0.0,
+                        unitTarget = if (byUnit) t else 0.0, watch = watchOnly.isChecked,
                     ))
-                    Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, if (watchOnly.isChecked) "Takibe alındı" else "Alarm kuruldu", Toast.LENGTH_SHORT).show()
                 }
-                askNotificationPermission()
+                if (!watchOnly.isChecked) askNotificationPermission()
                 if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
             } catch (e: Exception) {
                 AlertDialog.Builder(this).setTitle("Alarm kurulamadı")
@@ -3980,22 +3973,28 @@ class MainActivity : Activity() {
     }
 
     /** Alarmlarım ekranı */
-    private fun showAlarms() {
+    /** "alarms": bildirimli alarmlar · "watch": sadece takip (bildirim yok) */
+    private var alarmView = "alarms"
+
+    private fun showAlarms(mode: String = alarmView) {
         if (running) return
-        screen = "alarms"
+        alarmView = mode
+        val watchMode = mode == "watch"
+        screen = mode
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         progress.visibility = View.GONE
         status.visibility = View.VISIBLE
-        status.text = "Alarmlar ${Alarms.hours(this)} saatte bir arka planda kontrol edilir"
+        status.text = (if (watchMode) "Takip listesi" else "Alarmlar") + " ${Alarms.hours(this)} saatte bir arka planda kontrol edilir" +
+            if (watchMode) "; bildirim gönderilmez" else ""
         results.removeAllViews()
-        val list = Alarms.load(this)
+        val list = Alarms.load(this).filter { it.watch == watchMode }
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
         }
-        head.addView(label("Alarmlarım (${list.size})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${list.size})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(label("Ana sayfa", 13f, muted, true).apply {
             setPadding(dp(10), dp(6), dp(10), dp(6))
             setOnClickListener { status.visibility = View.GONE; showHome() }
@@ -4018,7 +4017,9 @@ class MainActivity : Activity() {
         })
         results.addView(head)
         if (list.isEmpty()) {
-            noticeCard("Henüz alarm yok. Arama sonuçlarında bir ilanın 🔕 düğmesine dokun ya da Trendyol, Hepsiburada gibi " +
+            noticeCard(if (watchMode) "Takip listen boş. Arama sonuçlarında bir ilanın zil düğmesine dokun ve " +
+                "“Sadece takip et”i işaretle: fiyatı ve geçmişi tutulur, bildirim gelmez." else
+                "Henüz alarm yok. Arama sonuçlarında bir ilanın zil düğmesine dokun ya da Trendyol, Hepsiburada gibi " +
                 "uygulamalarda bir ürünü Paylaş → İzci ile gönder.", ink, amberBg)
             return
         }

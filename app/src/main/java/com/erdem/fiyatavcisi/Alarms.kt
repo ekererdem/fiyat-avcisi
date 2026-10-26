@@ -43,6 +43,8 @@ data class Alarm(
     var groupId: Long = 0,
     var groupName: String = "",
     var groupQuery: String = "",
+    // Sadece takip: fiyat ve geçmiş tutulur, bildirim gönderilmez
+    var watch: Boolean = false,
 ) {
     fun unitPrice(p: Double = lastPrice): Double? = if (unitAmount > 0 && p > 0) p / unitAmount else null
 }
@@ -75,6 +77,7 @@ object Alarms {
                     j.optLong("checked"), j.optString("status"),
                     j.optDouble("unitAmount", 0.0), j.optString("unitName"), j.optDouble("unitTarget", 0.0),
                     j.optLong("groupId", 0), j.optString("groupName"), j.optString("groupQuery"),
+                    j.optBoolean("watch", false),
                 )
             } catch (e: Exception) { null }
         }.toMutableList()
@@ -89,7 +92,7 @@ object Alarms {
                 put("wantStock", a.wantStock); a.inStock?.let { put("inStock", it) }
                 put("checked", a.lastCheck); put("status", a.status)
                 put("unitAmount", a.unitAmount); put("unitName", a.unitName); put("unitTarget", a.unitTarget)
-                put("groupId", a.groupId); put("groupName", a.groupName); put("groupQuery", a.groupQuery)
+                put("groupId", a.groupId); put("groupName", a.groupName); put("groupQuery", a.groupQuery); put("watch", a.watch)
             })
         }
         prefs(ctx).edit().putString("list", arr.toString()).apply()
@@ -276,7 +279,7 @@ object Alarms {
                     else a.target > 0 && p <= a.target && (a.lastPrice <= 0 || a.lastPrice > a.target)
                     val anyDrop = a.target <= 0 && a.unitTarget <= 0
                     // Ürün alarmındaki ilanlar tek tek bildirim göndermez; grup olarak aşağıda değerlendirilir
-                    if (a.groupId == 0L && ((anyDrop && dropped) || hitTarget)) {
+                    if (a.groupId == 0L && !a.watch && ((anyDrop && dropped) || hitTarget)) {
                         val unitNow = a.unitPrice(p)
                         notify(ctx, a, "Fiyat düştü: ${money(p)}" + (unitNow?.let { " (${unitText(it, a.unitName)})" } ?: ""),
                             "${a.title.take(60)} · ${a.site} · önce ${money(a.lastPrice)}" +
@@ -291,7 +294,7 @@ object Alarms {
                     if (a.lowest <= 0 || p < a.lowest) a.lowest = p
                     History.recordOffer(ctx, a.link, p)
                 }
-                if (a.wantStock && r.inStock == true && a.inStock == false) {
+                if (a.wantStock && !a.watch && r.inStock == true && a.inStock == false) {
                     notify(ctx, a, "Stoğa girdi" + (p?.let { ": ${money(it)}" } ?: ""), "${a.title.take(70)} · ${a.site}")
                     notified++
                 }
@@ -313,7 +316,7 @@ object Alarms {
             val unit = best.unitAmount > 0
             val fmt = { v: Double -> if (unit) unitText(v, best.unitName) else money(v) }
             val hit = if (target > 0) m <= target && (prev <= 0 || prev > target) else prev > 0 && m < prev * 0.995
-            if (hit) {
+            if (hit && !items.first().watch) {
                 notify(ctx, best, "${best.site}'da ${fmt(m)}",
                     "${best.groupName.ifEmpty { best.title }.take(60)} · ${money(best.lastPrice)}" +
                         (if (prev > 0) " · önceki en iyi ${fmt(prev)}" else "") +

@@ -4337,7 +4337,7 @@ class MainActivity : Activity() {
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
         // Akordiyon: kapalıyken küçük satır, dokununca ayrıntılar açılır
         fun accordion(key: String, image: String, link: String, title: String, sub: String, price: String, priceColor: Int,
-                      detail: (LinearLayout) -> Unit) {
+                      openPage: () -> Unit, detail: (LinearLayout) -> Unit) {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 background = rounded(surface, 14, line)
@@ -4347,17 +4347,23 @@ class MainActivity : Activity() {
                 setPadding(dp(14), 0, dp(14), dp(12))
                 visibility = if (key in expandedAlarms) View.VISIBLE else View.GONE
             }
-            val chev = label(if (key in expandedAlarms) "▴" else "▾", 14f, muted, true).apply { setPadding(dp(10), 0, 0, 0) }
-            card.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(8), dp(12), dp(8))
+            // Büyük ok: akordiyonu açar/kapatır. Satırın geri kalanı (görsel, ad) ürün sayfasını açar.
+            val chev = label(if (key in expandedAlarms) "▴" else "▾", 24f, ink, true).apply {
+                gravity = Gravity.CENTER
+                contentDescription = "Ayrıntıları aç"
+                background = rounded(greyBg, 22)
                 setOnClickListener {
                     val open = body.visibility != View.VISIBLE
                     body.visibility = if (open) View.VISIBLE else View.GONE
-                    chev.text = if (open) "▴" else "▾"
+                    text = if (open) "▴" else "▾"
                     if (open) expandedAlarms.add(key) else expandedAlarms.remove(key)
                 }
+            }
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                setOnClickListener { openPage() }
                 addView(ImageView(this@MainActivity).apply {
                     background = rounded(Color.WHITE, 8)
                     setPadding(dp(2), dp(2), dp(2), dp(2))
@@ -4369,8 +4375,8 @@ class MainActivity : Activity() {
                     addView(label(title, 14f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
                     addView(label(sub, 12f, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(label(price, 14f, priceColor, true).apply { setPadding(dp(8), 0, 0, 0) })
-                addView(chev)
+                addView(label(price, 14f, priceColor, true).apply { setPadding(dp(8), 0, dp(10), 0) })
+                addView(chev, LinearLayout.LayoutParams(dp(44), dp(44)))
             })
             detail(body)
             card.addView(body)
@@ -4401,7 +4407,8 @@ class MainActivity : Activity() {
             val unit = best.unitAmount > 0
             val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
             accordion("g$gid", best.image, best.link, best.groupName.ifEmpty { best.title },
-                "${items.size} site · en uygun ${best.site}", Alarms.metric(best)?.let { fmt(it) } ?: "?", green) { body ->
+                "${items.size} site · en uygun ${best.site}", Alarms.metric(best)?.let { fmt(it) } ?: "?", green,
+                { itemBack = alarmView; alarmPage(gid, best.id) }) { body ->
                 val t = if (best.unitTarget > 0) best.unitTarget else best.target
                 if (!best.watch) body.addView(label(if (t > 0) "Hedef: ${fmt(t)}" else "Hedef: her ucuzlamada haber ver", 12f, muted).apply { setPadding(0, dp(2), 0, dp(4)) })
                 items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { a ->
@@ -4428,7 +4435,8 @@ class MainActivity : Activity() {
         // Tek ilanlar
         for (a in list.filter { it.groupId == 0L }) {
             accordion("a${a.id}", a.image, a.link, a.title, a.site + when (a.inStock) { false -> " · stokta yok"; true -> " · stokta"; else -> "" },
-                if (a.lastPrice > 0) money(a.lastPrice) else "?", if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink) { body ->
+                if (a.lastPrice > 0) money(a.lastPrice) else "?", if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink,
+                { itemBack = alarmView; alarmPage(0L, a.id) }) { body ->
                 val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(2), 0, 0) }
                 if (a.startPrice > 0) chips.addView(pill("başta ${money(a.startPrice)}", ink, greyBg))
                 if (a.lowest > 0 && a.lowest < a.startPrice) chips.addView(pill("en düşük ${money(a.lowest)}", green, greenBg))

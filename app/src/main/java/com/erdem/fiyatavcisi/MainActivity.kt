@@ -1002,11 +1002,9 @@ class MainActivity : Activity() {
             setBackgroundColor(paper)
         }
 
-        // Başlık: logo, ad, alarm ve ayar düğmeleri
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(14), dp(10), dp(10))
+        // Başlık: solda profil, ortada marka (oyma logo + İzci)
+        val header = FrameLayout(this).apply {
+            setPadding(dp(16), dp(14), dp(16), dp(10))
         }
         // Sol üst: profil düğmesi (baş harfler); menü buradan açılır. Yeni sürüm varsa üstünde kırmızı nokta yanar
         val avatarBox = FrameLayout(this).apply { setOnClickListener { showDrawer() } }
@@ -1020,9 +1018,27 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         avatarBox.addView(gearDot, FrameLayout.LayoutParams(dp(13), dp(13)).apply { gravity = Gravity.TOP or Gravity.END })
-        header.addView(avatarBox, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
-        header.addView(label("İzci", 20f, ink, true).apply { setOnClickListener { showDrawer() } },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(avatarBox, FrameLayout.LayoutParams(dp(40), dp(40)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+        val brandMark = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = "İzci"
+            setOnClickListener { if (!running) goHome() }
+        }
+        brandMark.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_logo)
+            imageTintList = android.content.res.ColorStateList.valueOf(if (dark) brand else c("#C98A0B"))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(8) })
+        brandMark.addView(TextView(this).apply {
+            text = "İzci"
+            textSize = 26f
+            setTextColor(ink)
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+            letterSpacing = -0.01f
+            includeFontPadding = false
+        })
+        header.addView(brandMark, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })
         root.addView(header)
 
         // Arama kutusu: hap biçimi, içinde barkod ve Ara düğmeleri

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Marka logosu (oyma): etiket; ip deliği, büyüteç halkası ve sapı oyuk, zemin içinden görünür -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="66dp" android:height="66dp"
+    android:viewportWidth="66" android:viewportHeight="66">
+    <group android:translateX="-16" android:translateY="-19.5">
+        <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+            android:pathData="M18,47 L45,20 H75 A6,6 0 0,1 81,26 V56 L54,83 A6,6 0 0,1 45.5,83 L18,55.5 A6,6 0 0,1 18,47 Z M68,28 A5,5 0 1,0 68,38 A5,5 0 1,0 68,28 Z M47,40 A15,15 0 1,0 47,70 A15,15 0 1,0 47,40 Z M47,46 A9,9 0 1,0 47,64 A9,9 0 1,0 47,46 Z M55.1,68.1 L60.1,63.1 L66.4,69.5 L61.5,74.4 Z" />
+    </group>
+</vector>

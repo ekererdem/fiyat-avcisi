@@ -900,6 +900,7 @@ class MainActivity : Activity() {
             resultsScroll.visibility != View.VISIBLE -> toggleBrowser()
             running -> { stopAll(); running = false; progress.visibility = View.GONE; goHome() }
             screen == "product" -> backToResults()
+            screen == "item" -> itemGoBack()
             screen == "settings" || screen == "alarms" || screen == "watch" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
@@ -1365,7 +1366,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 background = rounded(surface, 16, line)
                 setPadding(dp(16), dp(14), dp(16), dp(14))
-                setOnClickListener { showAlarms(if (best.watch) "watch" else "alarms") }
+                setOnClickListener { itemBack = "home"; alarmPage(gid, best.id) }
             }
             val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP }
             top.addView(LinearLayout(this).apply {
@@ -1401,7 +1402,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 background = rounded(surface, 16, line)
                 setPadding(dp(14), dp(12), dp(16), dp(12))
-                setOnClickListener { showAlarms(if (a.watch) "watch" else "alarms") }
+                setOnClickListener { itemBack = "home"; alarmPage(0L, a.id) }
             }
             card.addView(ImageView(this).apply {
                 background = rounded(greyBg, 10)
@@ -3480,6 +3481,134 @@ class MainActivity : Activity() {
         resultsScroll.post { resultsScroll.scrollTo(0, y) }
     }
 
+    /** Takip/alarm ürününün İzci sayfası: fotoğraf, fiyat, geçmiş, siteler; bildirim aç/kapat, ara ve güncelle, sil */
+    private var itemBack = "alarms"
+
+    private fun alarmPage(gid: Long, focusId: Long) {
+        if (running) return
+        val all = Alarms.load(this)
+        val items = if (gid != 0L) all.filter { it.groupId == gid } else all.filter { it.id == focusId }
+        val a = items.firstOrNull { it.id == focusId } ?: items.firstOrNull() ?: run { showAlarms(); return }
+        screen = "item"
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        status.visibility = View.GONE
+        results.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(16)) }
+        results.addView(col)
+        col.addView(label(if (itemBack == "home") "‹  Ana sayfa" else if (a.watch) "‹  Takip listem" else "‹  Alarmlarım", 14f, gold, true).apply {
+            setPadding(0, dp(6), 0, dp(10))
+            setOnClickListener { itemGoBack() }
+        })
+        col.addView(ImageView(this).apply {
+            background = rounded(Color.WHITE, 16)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(14), 0, dp(4))
+            addView(pill(a.site, Color.WHITE, siteColors[a.site] ?: ink, bold = true, size = 12f))
+            addView(label(if (a.watch) "Takipte · bildirim yok" else "Alarm açık", 13f, if (a.watch) muted else gold, true)
+                .apply { setPadding(dp(10), 0, 0, 0) })
+        })
+        if (gid != 0L && a.groupName.isNotEmpty()) col.addView(label(a.groupName, 13f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        col.addView(label(a.title, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
+        col.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 30f,
+            if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
+        val info = mutableListOf<String>()
+        a.unitPrice()?.let { info.add(Alarms.unitText(it, a.unitName)) }
+        if (a.startPrice > 0) info.add("başta ${money(a.startPrice)}")
+        if (a.lowest > 0 && a.lowest < a.startPrice) info.add("en düşük ${money(a.lowest)}")
+        when (a.inStock) { true -> info.add("stokta"); false -> info.add("stokta yok"); else -> {} }
+        col.addView(label(info.joinToString(" · "), 13f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        val t = if (a.unitTarget > 0) Alarms.unitText(a.unitTarget, a.unitName) else if (a.target > 0) money(a.target) else null
+        if (!a.watch) col.addView(label(if (t != null) "Hedef: $t" else "Hedef: her ucuzlamada haber ver", 13f, ink, true).apply { setPadding(0, dp(6), 0, 0) })
+        if (a.lastCheck > 0) col.addView(label("Son kontrol ${java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR")).format(java.util.Date(a.lastCheck))} · ${a.status}", 12f, muted)
+            .apply { setPadding(0, dp(4), 0, 0) })
+
+        // İşlemler
+        val acts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(16), 0, 0) }
+        fun act(icon: Int, text: String, on: Boolean, action: () -> Unit) {
+            acts.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = rounded(if (on) greenBg else surface, 14, line)
+                setPadding(dp(4), dp(12), dp(4), dp(10))
+                contentDescription = text
+                setOnClickListener { action() }
+                addView(ImageView(this@MainActivity).apply {
+                    setImageResource(icon)
+                    imageTintList = android.content.res.ColorStateList.valueOf(if (on) green else ink)
+                }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                addView(label(text, 12f, if (on) green else ink, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        }
+        act(R.drawable.ic_bell, if (a.watch) "Bildirim aç" else "Bildirim açık", !a.watch) {
+            val ids = items.map { it.id }.toSet()
+            val on = a.watch
+            Alarms.save(this, Alarms.load(this).map { if (it.id in ids) it.copy(watch = !on) else it })
+            if (on) askNotificationPermission()
+            Toast.makeText(this, if (on) "Bildirim açıldı: fiyat düşünce haber veririm" else "Bildirim kapandı, takipte kalıyor", Toast.LENGTH_SHORT).show()
+            alarmPage(gid, a.id)
+        }
+        act(R.drawable.ic_search, "Ara ve güncelle", false) {
+            input.setText(a.groupQuery.ifEmpty { a.groupName.ifEmpty { a.title.split(" ").take(6).joinToString(" ") } })
+            if (gid != 0L) alarmRefresh = gid
+            startTest()
+        }
+        act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+        act(R.drawable.ic_bell_off, "Sil", false) {
+            AlertDialog.Builder(this).setTitle(if (a.watch) "Takipten çıkarılsın mı?" else "Alarm silinsin mi?")
+                .setPositiveButton("Sil") { _, _ ->
+                    if (gid != 0L) Alarms.removeGroup(this, gid) else Alarms.remove(this, a.id)
+                    itemGoBack()
+                }.setNegativeButton("Vazgeç", null).show()
+        }
+        col.addView(acts)
+
+        // Fiyat geçmişi
+        fun historyBlock(title: String, pts: List<Pair<Long, Double>>, fmt: (Double) -> String) {
+            col.addView(label(title, 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(6)) })
+            if (pts.size >= 2) {
+                col.addView(Sparkline(this, pts, green, line), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+                val days = (History.today() - pts.first().first + 1).toInt()
+                col.addView(label("Son $days gün · en düşük ${fmt(pts.minOf { it.second })} · en yüksek ${fmt(pts.maxOf { it.second })}", 12f, muted)
+                    .apply { setPadding(0, dp(4), 0, 0) })
+            } else col.addView(label("Grafik ikinci günden sonra çıkar; fiyat her kontrolde günlük kaydediliyor.", 13f, muted))
+        }
+        if (gid != 0L) {
+            val unit = a.unitAmount > 0
+            historyBlock("Ürünün en uygun fiyatı", History.get(this, "g:$gid")) { v -> if (unit) Alarms.unitText(v, a.unitName) else money(v) }
+        }
+        historyBlock(if (gid != 0L) "Bu ilanın fiyatı (${a.site})" else "Fiyat geçmişi", History.offer(this, a.link)) { money(it) }
+
+        // Ürün alarmında diğer siteler
+        if (items.size > 1) {
+            col.addView(label("Bütün siteler", 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(4)) })
+            val unit = a.unitAmount > 0
+            items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { x ->
+                col.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(12), 0, dp(12))
+                    setOnClickListener { alarmPage(gid, x.id) }
+                    addView(label("● ", 12f, siteColors[x.site] ?: muted))
+                    addView(label(x.site, 14f, if (x.id == a.id) gold else ink, x.id == a.id), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true))
+                })
+                col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+            }
+        }
+        resultsScroll.post { resultsScroll.scrollTo(0, 0) }
+    }
+
+    private fun itemGoBack() {
+        if (itemBack == "home") goHome() else showAlarms(itemBack)
+    }
+
     /** Tek dokunuşla takip: aynı ürün birden çok sitedeyse hepsi, değilse bu ilan. Bildirim yok. */
     private fun quickWatch(o: Offer) {
         try {
@@ -4213,6 +4342,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 background = rounded(surface, 14, line)
                 setPadding(dp(14), dp(12), dp(14), dp(12))
+                setOnClickListener { itemBack = alarmView; alarmPage(gid, best.id) }
             }
             card.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -4237,7 +4367,7 @@ class MainActivity : Activity() {
                 card.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     setPadding(0, dp(4), 0, dp(4))
-                    setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+                    setOnClickListener { itemBack = alarmView; alarmPage(gid, a.id) }
                     addView(label("● ", 12f, siteColors[a.site] ?: muted))
                     addView(label(a.site, 13f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     addView(label((Alarms.metric(a)?.let { fmt(it) } ?: "?") + if (a.status.startsWith("fiyat okunamadı")) " · okunamadı" else "", 13f, muted))
@@ -4262,7 +4392,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 background = rounded(surface, 14, line)
                 setPadding(dp(12), dp(12), dp(12), dp(12))
-                setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+                setOnClickListener { itemBack = alarmView; alarmPage(0L, a.id) }
             }
             val iv = ImageView(this).apply {
                 background = rounded(surface, 12, line)
@@ -4311,8 +4441,6 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
         }
-        noticeCard("Xiaomi telefonlarda arka plan kontrolünün çalışması için: Ayarlar → Uygulamalar → İzci → " +
-            "Pil tasarrufu → Kısıtlama yok.", muted, greyBg)
     }
 
     /** Başka uygulamadan "Paylaş" ile gelen ürün linki: karşılaştır ya da alarm kur */

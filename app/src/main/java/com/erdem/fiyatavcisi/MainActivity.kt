@@ -211,6 +211,51 @@ class MainActivity : Activity() {
     private fun flag(k: String, def: Boolean = false) = settings.getBoolean(k, def)
     private fun siteOn(name: String) = settings.getBoolean("site_$name", true)
     private var screen = "home"           // home / results / alarms / settings
+        set(v) { field = v; updateNav() }
+
+    // Alt menü çubuğu: Ana sayfa, Barkod, Alarmlar, Ayarlar
+    private lateinit var navBar: LinearLayout
+    private val navItems = mutableListOf<Triple<String, ImageView, TextView>>()
+
+    private fun updateNav() {
+        if (!::navBar.isInitialized) return
+        for ((key, icon, text) in navItems) {
+            val on = key == screen
+            val col = if (on) gold else muted
+            icon.imageTintList = android.content.res.ColorStateList.valueOf(col)
+            text.setTextColor(col)
+        }
+    }
+
+    private fun buildNav(): LinearLayout {
+        navBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(surface)
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        fun item(key: String, icon: Int, text: String, action: () -> Unit) {
+            val iv = ImageView(this).apply { setImageResource(icon) }
+            val tv = label(text, 11f, muted, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(3), 0, 0) }
+            navBar.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                contentDescription = text
+                minimumHeight = dp(52)
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(greyBg), null, rounded(Color.WHITE, 12))
+                setOnClickListener { action() }
+                addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+                addView(tv)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            navItems.add(Triple(key, iv, tv))
+        }
+        item("home", R.drawable.ic_home, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
+        item("scan", R.drawable.ic_barcode, "Barkod") { scanBarcode() }
+        item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms() }
+        item("settings", R.drawable.ic_gear, "Ayarlar") { showSettings() }
+        updateNav()
+        return navBar
+    }
     private val categories = listOf("Elektronik", "Market", "Kozmetik", "Giyim", "Bebek", "Diğer")
     private var currentCategory = "Diğer"
     private var editCat = "Genel"
@@ -1066,16 +1111,15 @@ class MainActivity : Activity() {
             }
         }
         searchRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        searchRow.addView(iconButton(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() })
-        val go = label("Ara", 15f, accentOn, true).apply {
-            gravity = Gravity.CENTER
-            background = rounded(gold, 22)
-            setPadding(dp(18), dp(11), dp(18), dp(11))
-            setOnClickListener { startTest() }
-        }
-        searchRow.addView(go, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = dp(2) })
+        // Yeşil yuvarlak barkod düğmesi (arama klavyedeki Ara tuşuyla başlar)
+        searchRow.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_barcode)
+            imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
+            contentDescription = "Barkod okut"
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+            setOnClickListener { scanBarcode() }
+        }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(6) })
         root.addView(searchRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(14), dp(2), dp(14), dp(8)) })
@@ -1185,6 +1229,17 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         root.addView(stack, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+        root.addView(buildNav())
+        // Klavye açıkken alt menü gizlenir (klavyenin üstüne binmesin)
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            val r = android.graphics.Rect()
+            root.getWindowVisibleDisplayFrame(r)
+            val full = root.rootView.height
+            val kb = full > 0 && (full - r.bottom) > full * 0.2
+            val want = if (kb) View.GONE else View.VISIBLE
+            if (navBar.visibility != want) navBar.visibility = want
+        }
         handler.post { showHome() }
         return root
     }
@@ -1225,21 +1280,6 @@ class MainActivity : Activity() {
         if (running) return
         screen = "home"
         results.removeAllViews()
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(surface, 16, line)
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-        }
-        card.addView(label("Ne arıyorsun?", 20f, ink, true))
-        card.addView(label(
-            "Ürünün adını, model kodunu ya da barkod numarasını yaz. Trendyol, Hepsiburada, Amazon, MediaMarkt, " +
-                "Teknosa, N11, market zincirleri ve daha fazlası aynı anda taranır; aynı ürünü ucuzdan pahalıya sıralar, başka paket ve modelleri ayırır.",
-            14f, muted
-        ).apply { setPadding(0, dp(6), 0, 0) })
-        results.addView(card, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(8) })
-
         // Yeni sürüm bildirimi
         Update.pending(this)?.let { newName ->
             val info = label("Yeni sürüm: $newName · şu anki ${Update.currentName(this)}", 12f, ink)
@@ -1263,53 +1303,16 @@ class MainActivity : Activity() {
             ).apply { topMargin = dp(8) })
         }
 
-        // Barkod okut
-        results.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(gold, 18)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.drawable.ic_barcode)
-                imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
-            }, LinearLayout.LayoutParams(dp(26), dp(26)))
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), 0, 0, 0)
-                addView(label("Barkod okut", 16f, accentOn, true))
-                addView(label("Raftaki ürünün barkodunu ya da QR kodunu tara", 12f, accentOn).apply { alpha = 0.85f })
-            })
-            setOnClickListener { scanBarcode() }
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(10) })
-
-        // Alarmlar kartı
-        val alarmCount = Alarms.load(this).size
-        results.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(amberBg, 16)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            addView(label("🔔", 20f, ink))
-            addView(label(if (alarmCount > 0) "Alarmlarım · $alarmCount ürün takipte" else
-                "Fiyat alarmı: bir ilandaki 🔔 düğmesine dokun", 14f, ink, true).apply {
-                setPadding(dp(12), 0, 0, 0)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (alarmCount > 0) addView(label("▸", 16f, muted, true))
-            setOnClickListener { showAlarms() }
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(10) })
+        homeTracking()
 
         val recent = recentSearches()
-        results.addView(label(if (recent.isNotEmpty()) "Son aramalar" else "Örnek aramalar", 14f, ink, true)
-            .apply { setPadding(dp(4), dp(18), dp(4), dp(8)) })
+        results.addView(label(if (recent.isNotEmpty()) "Son aramalar" else "Örnek aramalar", 18f, ink, true)
+            .apply { setPadding(dp(4), dp(22), dp(4), dp(10)) })
         val flow = FlowLayout(this, dp(8))
         (recent.ifEmpty { listOf("iphone 16 128gb", "nescafe gold 200 gr", "dior sauvage edt 100 ml", "prima 4 numara") })
             .forEach { q ->
-                flow.addView(pill(q, ink, surface, size = 14f).apply {
-                    background = rounded(surface, 20, line)
+                flow.addView(pill(q, ink, paper, size = 14f).apply {
+                    background = rounded(paper, 20, line)
                     setPadding(dp(14), dp(8), dp(14), dp(8))
                     // Dokununca sadece arama kutusuna yazar: düzenleyip Ara'ya basılır
                     setOnClickListener {
@@ -1322,6 +1325,102 @@ class MainActivity : Activity() {
                 })
             }
         results.addView(flow)
+    }
+
+    /** Ana sayfa: takip edilen ürünler (ürün alarmları önce), en fazla 3 kart */
+    private fun homeTracking() {
+        val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
+        val groups = all.filter { it.groupId != 0L }.groupBy { it.groupId }
+        val singles = all.filter { it.groupId == 0L }
+        val total = groups.size + singles.size
+        results.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(18), dp(4), dp(10))
+            addView(label("Takip ettiklerin", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (total > 0) addView(label("Tümü · $total", 14f, gold, true).apply {
+                setPadding(dp(8), dp(6), 0, dp(6))
+                setOnClickListener { showAlarms() }
+            })
+        })
+        val lp = { LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) } }
+        if (total == 0) {
+            results.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 16, line)
+                setPadding(dp(16), dp(16), dp(16), dp(16))
+                addView(label("Henüz takip ettiğin ürün yok", 15f, ink, true))
+                addView(label("Arama sonuçlarında bir ilanın zil düğmesine dokun; fiyat düşünce ya da stoğa girince haber veririm.", 13f, muted)
+                    .apply { setPadding(0, dp(4), 0, 0) })
+            }, lp())
+            return
+        }
+        var shown = 0
+        for ((gid, items) in groups) {
+            if (shown >= 3) break
+            val best = Alarms.groupBest(items) ?: items.first()
+            val unit = best.unitAmount > 0
+            val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 16, line)
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                setOnClickListener { showAlarms() }
+            }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP }
+            top.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(best.groupName.ifEmpty { best.title }, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+                addView(label("Ürün alarmı · ${items.size} site · en uygun ${best.site}", 13f, muted).apply { setPadding(0, dp(3), 0, 0) })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            Alarms.metric(best)?.let { m ->
+                top.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.END
+                    setPadding(dp(10), 0, 0, 0)
+                    addView(label(if (unit) money(m) else money(m), 17f, green, true))
+                    if (unit) addView(label("${best.unitName} başı", 12f, muted))
+                })
+            }
+            card.addView(top)
+            val gh = History.get(this, "g:$gid")
+            if (gh.size >= 2) card.addView(Sparkline(this, gh, green, line), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(8) })
+            val t = if (best.unitTarget > 0) best.unitTarget else best.target
+            card.addView(FlowLayout(this, dp(6)).apply {
+                setPadding(0, dp(8), 0, 0)
+                addView(pill(if (t > 0) "Hedef ${fmt(t)}" else "Her ucuzlamada", brand, amberBg, size = 12f))
+            })
+            results.addView(card, lp())
+            shown++
+        }
+        for (a in singles.sortedByDescending { it.id }) {
+            if (shown >= 3) break
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(surface, 16, line)
+                setPadding(dp(14), dp(12), dp(16), dp(12))
+                setOnClickListener { showAlarms() }
+            }
+            card.addView(ImageView(this).apply {
+                background = rounded(greyBg, 10)
+                setPadding(dp(3), dp(3), dp(3), dp(3))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+            }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(a.title, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+                addView(label(a.site + when (a.inStock) { false -> " · stokta yok"; true -> " · stokta"; else -> "" } +
+                    when { a.unitTarget > 0 || a.target > 0 -> " · hedefli"; else -> " · her düşüşte" }, 13f, muted)
+                    .apply { setPadding(0, dp(3), 0, 0) })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            card.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 16f,
+                if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true).apply { setPadding(dp(10), 0, 0, 0) })
+            results.addView(card, lp())
+            shown++
+        }
     }
 
     private fun recentSearches(): List<String> =

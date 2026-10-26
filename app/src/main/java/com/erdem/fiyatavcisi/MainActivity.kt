@@ -1076,12 +1076,17 @@ class MainActivity : Activity() {
                     imageTintList = android.content.res.ColorStateList.valueOf(brand)
                 }, FrameLayout.LayoutParams(dp(22), dp(22)).apply { gravity = Gravity.CENTER })
             }, LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginEnd = dp(10) })
+            // Marka yazısı: Outfit Black, sonunda altın nokta ("İzci.")
             addView(TextView(this@MainActivity).apply {
-                text = "İzci"
-                textSize = 26f
+                text = android.text.SpannableString("İzci.").apply {
+                    setSpan(android.text.style.ForegroundColorSpan(brand), 4, 5, 0)
+                }
+                textSize = 30f
                 setTextColor(ink)
-                typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-                letterSpacing = -0.01f
+                typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) {
+                    android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+                }
+                letterSpacing = -0.03f
                 includeFontPadding = false
             })
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })

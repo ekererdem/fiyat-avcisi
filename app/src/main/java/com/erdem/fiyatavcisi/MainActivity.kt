@@ -4008,6 +4008,7 @@ class MainActivity : Activity() {
 
     private fun showSettings() {
         if (running) return
+        val keepY = if (screen == "settings") resultsScroll.scrollY else 0
         screen = "settings"
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
@@ -4035,10 +4036,7 @@ class MainActivity : Activity() {
 
         // Kurallar: genel ya da kategoriye özel
         val rules = gen
-        rules.addView(label("Sonuçlarda gizlenenler", 14f, ink, true).apply { setPadding(dp(4), dp(18), dp(4), dp(2)) })
         val cats = listOf("Genel") + categories
-        choiceRow(rules, "Filtrenin uygulanacağı kategori", "Bir kategori seçersen o kategorideki aramalarda genel filtrenin yerine geçer",
-            cats, cats.indexOf(editCat).coerceAtLeast(0)) { i -> editCat = cats[i] }
         val ruleDefs = listOf(
             Triple("hideAbroad", "Yurtdışı / ithal ilanları gizle", "International Version, menşei yurtdışı, TU/A olmayan cihazlar"),
             Triple("hideImporter", "İthalatçı garantili ilanları gizle", "Ürün sayfası açılan pahalı ilanlarda geçerli"),
@@ -4077,7 +4075,32 @@ class MainActivity : Activity() {
                 settings.edit().putInt("cat_${cat}_minReviews", if (i == 0) -1 else counts[i - 1]).apply()
             }
         }
+        choiceRow(rules, "Arama filtrelerinin uygulanacağı kategori", "Genel seçiliyse yukarıdaki filtreler bütün aramalarda geçerli; bir kategori seçersen o kategorinin aramalarına özel ayar yaparsın",
+            cats, cats.indexOf(editCat).coerceAtLeast(0)) { i -> editCat = cats[i] }
 
+
+
+        // Siteler: dokunarak aç/kapat, yan yana küçük çipler
+        val src = settingsCard("Taranan siteler")
+        src.addView(label("Dokunarak aç ya da kapat. Siteler aramanın kategorisine göre ayrıca seçilir.", 12f, muted).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
+        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(6)) }
+        sites.forEach { site ->
+            val chip = TextView(this).apply { textSize = 13f; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+            fun paint() {
+                val on = siteOn(site.name)
+                chip.text = if (on) "✓ ${site.name}" else site.name
+                chip.setTextColor(if (on) green else muted)
+                chip.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                chip.background = if (on) rounded(greenBg, 18) else rounded(paper, 18, line)
+            }
+            paint()
+            chip.setOnClickListener {
+                settings.edit().putBoolean("site_${site.name}", !siteOn(site.name)).apply()
+                paint()
+            }
+            siteFlow.addView(chip)
+        }
+        src.addView(siteFlow)
 
 
         // İzinler
@@ -4110,34 +4133,12 @@ class MainActivity : Activity() {
         actionRow(perm, "Uygulama ayarları", null, "Android'in bu uygulama için bütün ayarları", "Aç") { openIntent(appDetails()) }
 
         // Siteler
-        // Siteler: dokunarak aç/kapat, yan yana küçük çipler
-        val src = settingsCard("Taranan siteler")
-        src.addView(label("Dokunarak aç ya da kapat. Siteler aramanın kategorisine göre ayrıca seçilir.", 12f, muted).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
-        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(6)) }
-        sites.forEach { site ->
-            val chip = TextView(this).apply { textSize = 13f; setPadding(dp(12), dp(8), dp(12), dp(8)) }
-            fun paint() {
-                val on = siteOn(site.name)
-                chip.text = if (on) "✓ ${site.name}" else site.name
-                chip.setTextColor(if (on) green else muted)
-                chip.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                chip.background = if (on) rounded(greenBg, 18) else rounded(paper, 18, line)
-            }
-            paint()
-            chip.setOnClickListener {
-                settings.edit().putBoolean("site_${site.name}", !siteOn(site.name)).apply()
-                paint()
-            }
-            siteFlow.addView(chip)
-        }
-        src.addView(siteFlow)
-
 
         results.addView(label("İzci · ${Update.currentName(this)}", 12f, muted).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, dp(10))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        resultsScroll.post { resultsScroll.scrollTo(0, 0) }
+        resultsScroll.post { resultsScroll.scrollTo(0, keepY) }
     }
 
     // ---------- Fiyat alarmı ----------

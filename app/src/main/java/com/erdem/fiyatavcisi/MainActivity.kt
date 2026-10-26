@@ -1344,100 +1344,83 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
-    /** Ana sayfa: takip edilen ürünler (ürün alarmları önce), en fazla 3 kart */
+    /** Ana sayfa: iki sütun — solda Alarmlar, sağda Takip; her birinde en fazla 3 ürün kutucuğu */
     private fun homeTracking() {
         val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
-        val groups = all.filter { it.groupId != 0L }.groupBy { it.groupId }
-        val singles = all.filter { it.groupId == 0L }
-        val total = groups.size + singles.size
-        results.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(18), dp(4), dp(10))
-            addView(label("Takip ettiklerin", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (total > 0) addView(label("Tümü · $total", 14f, gold, true).apply {
-                setPadding(dp(8), dp(6), 0, dp(6))
-                setOnClickListener { showAlarms(if (all.all { it.watch }) "watch" else "alarms") }
-            })
-        })
-        val lp = { LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) } }
-        if (total == 0) {
-            results.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = rounded(surface, 16, line)
-                setPadding(dp(16), dp(16), dp(16), dp(16))
-                addView(label("Henüz takip ettiğin ürün yok", 15f, ink, true))
-                addView(label("Arama sonuçlarında bir ilanın zil düğmesine dokun; fiyat düşünce ya da stoğa girince haber veririm.", 13f, muted)
-                    .apply { setPadding(0, dp(4), 0, 0) })
-            }, lp())
-            return
-        }
-        var shown = 0
-        for ((gid, items) in groups) {
-            if (shown >= 3) break
-            val best = Alarms.groupBest(items) ?: items.first()
-            val unit = best.unitAmount > 0
-            val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = rounded(surface, 16, line)
-                setPadding(dp(16), dp(14), dp(16), dp(14))
-                setOnClickListener { itemBack = "home"; alarmPage(gid, best.id) }
+        data class Entry(val gid: Long, val focus: Alarm, val title: String, val price: String, val down: Boolean, val sub: String)
+        fun entries(watch: Boolean): List<Entry> {
+            val list = all.filter { it.watch == watch }
+            val out = mutableListOf<Entry>()
+            for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
+                val best = Alarms.groupBest(items) ?: items.first()
+                val unit = best.unitAmount > 0
+                val m = Alarms.metric(best)
+                out.add(Entry(gid, best, best.groupName.ifEmpty { best.title },
+                    m?.let { if (unit) Alarms.unitText(it, best.unitName) else money(it) } ?: "?", false, "${items.size} site · ${best.site}"))
             }
-            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP }
-            top.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(label(best.groupName.ifEmpty { best.title }, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-                addView(label((if (best.watch) "Takipte" else "Ürün alarmı") + " · ${items.size} site · en uygun ${best.site}", 13f, muted).apply { setPadding(0, dp(3), 0, 0) })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Alarms.metric(best)?.let { m ->
-                top.addView(LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.END
-                    setPadding(dp(10), 0, 0, 0)
-                    addView(label(if (unit) money(m) else money(m), 17f, green, true))
-                    if (unit) addView(label("${best.unitName} başı", 12f, muted))
-                })
-            }
-            card.addView(top)
-            val gh = History.get(this, "g:$gid")
-            if (gh.size >= 2) card.addView(Sparkline(this, gh, green, line), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(8) })
-            val t = if (best.unitTarget > 0) best.unitTarget else best.target
-            card.addView(FlowLayout(this, dp(6)).apply {
-                setPadding(0, dp(8), 0, 0)
-                addView(pill(if (best.watch) "Sadece takip" else if (t > 0) "Hedef ${fmt(t)}" else "Her ucuzlamada", brand, amberBg, size = 12f))
-            })
-            results.addView(card, lp())
-            shown++
+            for (a in list.filter { it.groupId == 0L }.sortedByDescending { it.id })
+                out.add(Entry(0L, a, a.title, if (a.lastPrice > 0) money(a.lastPrice) else "?", a.lastPrice > 0 && a.lastPrice < a.startPrice, a.site))
+            return out
         }
-        for (a in singles.sortedByDescending { it.id }) {
-            if (shown >= 3) break
-            val card = LinearLayout(this).apply {
+        val alarms = entries(false)
+        val watches = entries(true)
+
+        val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(14), 0, 0) }
+        fun column(title: String, icon: Int, mode: String, list: List<Entry>, empty: String): LinearLayout {
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            // Sütun başlığı: simge, ad, sayı
+            col.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = rounded(surface, 16, line)
-                setPadding(dp(14), dp(12), dp(16), dp(12))
-                setOnClickListener { itemBack = "home"; alarmPage(0L, a.id) }
+                setPadding(dp(2), 0, dp(2), dp(10))
+                setOnClickListener { showAlarms(mode) }
+                addView(FrameLayout(this@MainActivity).apply {
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (mode == "alarms") amberBg else greenBg) }
+                    addView(ImageView(this@MainActivity).apply {
+                        setImageResource(icon)
+                        imageTintList = android.content.res.ColorStateList.valueOf(if (mode == "alarms") brand else green)
+                    }, FrameLayout.LayoutParams(dp(16), dp(16)).apply { gravity = Gravity.CENTER })
+                }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(8) })
+                addView(label(title, 16f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (list.isNotEmpty()) addView(label("${list.size} ›", 13f, muted, true))
+            })
+            if (list.isEmpty()) {
+                col.addView(label(empty, 12f, muted).apply {
+                    background = rounded(surface, 16, line)
+                    setPadding(dp(12), dp(14), dp(12), dp(14))
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
-            card.addView(ImageView(this).apply {
-                background = rounded(greyBg, 10)
-                setPadding(dp(3), dp(3), dp(3), dp(3))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
-            }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
-            card.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(label(a.title, 15f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-                addView(label(a.site + when (a.inStock) { false -> " · stokta yok"; true -> " · stokta"; else -> "" } +
-                    when { a.watch -> " · takipte"; a.unitTarget > 0 || a.target > 0 -> " · hedefli"; else -> " · her düşüşte" }, 13f, muted)
-                    .apply { setPadding(0, dp(3), 0, 0) })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            card.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 16f,
-                if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true).apply { setPadding(dp(10), 0, 0, 0) })
-            results.addView(card, lp())
-            shown++
+            list.take(3).forEach { e ->
+                col.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(surface, 16, line)
+                    setPadding(dp(10), dp(10), dp(10), dp(12))
+                    setOnClickListener { itemBack = "home"; alarmPage(e.gid, e.focus.id) }
+                    addView(ImageView(this@MainActivity).apply {
+                        background = rounded(Color.WHITE, 12)
+                        setPadding(dp(6), dp(6), dp(6), dp(6))
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        if (e.focus.image.isNotEmpty()) loadImage(e.focus.image, this, Uri.parse(e.focus.link).let { u -> "${u.scheme}://${u.host}/" })
+                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(92)))
+                    addView(label(e.title, 13f, ink, true).apply {
+                        maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(8), 0, 0); minLines = 2
+                    })
+                    addView(label(e.price, 15f, if (e.down || e.gid != 0L) green else ink, true).apply { setPadding(0, dp(6), 0, 0) })
+                    addView(label(e.sub, 11f, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
+            }
+            if (list.size > 3) col.addView(label("Tümünü gör", 13f, gold, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(4), 0, dp(4))
+                setOnClickListener { showAlarms(mode) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return col
         }
+        cols.addView(column("Alarmlar", R.drawable.ic_bell, "alarms", alarms, "Fiyat düşünce haber almak için bir ürüne alarm kur."),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
+        cols.addView(column("Takip", R.drawable.ic_watch, "watch", watches, "Bildirimsiz izlemek istediğin ürünleri takibe al."),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6) })
+        results.addView(cols)
     }
 
     /** Ürün sayısı: bir ürün alarmının bütün siteleri tek ürün sayılır */
@@ -3956,10 +3939,6 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), 0)
         }
         head.addView(label("Ayarlar", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(label("Kapat", 14f, gold, true).apply {
-            setPadding(dp(10), dp(6), dp(4), dp(6))
-            setOnClickListener { if (offers.isNotEmpty()) { filterBar.visibility = View.VISIBLE; status.visibility = View.VISIBLE; chipsScroll.visibility = if (running) View.VISIBLE else View.GONE; render(final = finished) } else showHome() }
-        })
         results.addView(head)
 
         // Genel ayarlar: tema ve takip/alarm kontrol sıklığı
@@ -4330,10 +4309,6 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), dp(8))
         }
         head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${productCount(list)})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(label("Ana sayfa", 13f, muted, true).apply {
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            setOnClickListener { status.visibility = View.GONE; showHome() }
-        })
         if (list.isNotEmpty()) head.addView(label("Şimdi kontrol et", 13f, accentOn, true).apply {
             background = rounded(gold, 12)
             setPadding(dp(12), dp(8), dp(12), dp(8))

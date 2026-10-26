@@ -3195,7 +3195,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             background = rounded(greenBg, 24)
             setPadding(dp(16), dp(16), dp(16), dp(14))
-            setOnClickListener { openLink(o) }
+            setOnClickListener { productSheet(o) }
         }
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         top.addView(photo(o, 92), LinearLayout.LayoutParams(dp(92), dp(92)).apply { marginEnd = dp(14) })
@@ -3334,6 +3334,185 @@ class MainActivity : Activity() {
         if (open) body()
     }
 
+    /** Ürün kartı: alttan açılan sayfa. Fotoğraf, fiyat, geçmiş, diğer siteler; takip et / alarm kur / siteye git */
+    private fun productSheet(o: Offer) {
+        val d = android.app.Dialog(this, if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(paper)
+                cornerRadii = floatArrayOf(dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), 0f, 0f, 0f, 0f)
+            }
+            isClickable = true
+        }
+        // Tutamak
+        sheet.addView(View(this).apply { background = rounded(line, 3) },
+            LinearLayout.LayoutParams(dp(40), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(10); bottomMargin = dp(4) })
+        val scroll = ScrollView(this)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(16)) }
+        scroll.addView(col)
+        sheet.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // Fotoğraf
+        col.addView(ImageView(this).apply {
+            background = rounded(Color.WHITE, 16)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            if (o.image.isNotEmpty()) loadImage(o.image, this, Uri.parse(o.link).let { u -> "${u.scheme}://${u.host}/" })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
+        // Site · puan
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(14), 0, dp(4))
+            addView(pill(o.site, Color.WHITE, siteColors[o.site] ?: ink, bold = true, size = 12f))
+            if (o.rating.isNotEmpty()) addView(label("★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "", 13f, muted)
+                .apply { setPadding(dp(10), 0, 0, 0) })
+        })
+        col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
+        // Fiyat
+        val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
+        priceRow.addView(label(money(o.price), 30f, if (o.kind == Kind.MATCH) green else ink, true))
+        if (o.listPrice > o.price + 0.5) priceRow.addView(label(money(o.listPrice), 15f, muted).apply {
+            paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            setPadding(dp(10), 0, 0, dp(5))
+        })
+        col.addView(priceRow)
+        val info = mutableListOf<String>()
+        unitText(o).takeIf { it.isNotEmpty() }?.let { info.add(it) }
+        if (o.basket) info.add("sepette")
+        when { o.shipFee == 0.0 -> info.add("kargo bedava"); o.shipFee > 0 -> info.add("kargo ${money(o.shipFee)}") }
+        if (o.memberPrice > 0) info.add("${o.memberName.ifEmpty { "üyelere" }} ${money(o.memberPrice)}")
+        if (info.isNotEmpty()) col.addView(label(info.joinToString(" · "), 13f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(10), 0, 0) }
+        warrantyBadge(o)?.let { (txt, c2) -> chips.addView(pill(txt.substringBefore(" —"), c2, if (c2 == green) greenBg else if (c2 == red) redBg else greyBg, size = 12f)) }
+        if (o.origin.isNotEmpty()) chips.addView(pill(o.origin, if (o.origin.startsWith("Türkiye")) green else red,
+            if (o.origin.startsWith("Türkiye")) greenBg else redBg, size = 12f))
+        if (o.seller.isNotEmpty()) chips.addView(pill("Satıcı: ${o.seller}" + if (o.sellerScore.isNotEmpty()) " · ${o.sellerScore}" else "", ink, greyBg, size = 12f))
+        if (o.kind != Kind.MATCH) chips.addView(pill(kindLabel(o), orange, orangeBg, size = 12f))
+        if (chips.childCount > 0) col.addView(chips)
+
+        // Takip / alarm durumu
+        val all = Alarms.load(this)
+        val own = all.firstOrNull { it.link.substringBefore('?') == o.link.substringBefore('?') }
+        val gid = own?.groupId?.takeIf { it != 0L } ?: if (o.kind == Kind.MATCH || o.kind == Kind.OTHER_PACKAGE) productAlarmGroup() else null
+        val tracked = own ?: gid?.let { g -> all.firstOrNull { it.groupId == g } }
+        if (tracked != null) col.addView(label(if (tracked.watch) "Bu ürün takip listende" else "Bu ürün için alarm kurulu", 13f, gold, true)
+            .apply { setPadding(0, dp(12), 0, 0) })
+
+        // Fiyat geçmişi: bu ilan
+        fun historyBlock(title: String, pts: List<Pair<Long, Double>>) {
+            col.addView(label(title, 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(6)) })
+            if (pts.size >= 2) {
+                col.addView(Sparkline(this, pts, green, line), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+                val days = (History.today() - pts.first().first + 1).toInt()
+                col.addView(label("Son $days gün · en düşük ${money(pts.minOf { it.second })} · en yüksek ${money(pts.maxOf { it.second })}", 12f, muted)
+                    .apply { setPadding(0, dp(4), 0, 0) })
+            } else col.addView(label("Fiyat geçmişi bugünden itibaren tutuluyor; grafik ikinci günden sonra çıkar. Takibe alırsan her gün kontrol edilir.", 13f, muted))
+        }
+        historyBlock("Fiyat geçmişi", History.offer(this, o.link))
+
+        // Aynı ürün başka sitelerde
+        if (o.kind == Kind.MATCH) {
+            val others = offers.filter { it.kind == Kind.MATCH && offerKey(it) != offerKey(o) }.sortedBy { it.price }.take(8)
+            if (others.isNotEmpty()) {
+                col.addView(label("Aynı ürün başka yerlerde", 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(4)) })
+                others.forEach { x ->
+                    col.addView(LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(12), 0, dp(12))
+                        setOnClickListener { d.dismiss(); productSheet(x) }
+                        addView(label("● ", 12f, siteColors[x.site] ?: muted))
+                        addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, ink).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
+                            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                        addView(label(money(x.price), 15f, if (x.price < o.price) green else ink, true))
+                    })
+                    col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+                }
+            }
+        }
+
+        // Alt düğmeler
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(14), dp(10), dp(14), dp(14))
+            setBackgroundColor(surface)
+        }
+        fun btn(text: String, fg: Int, bg: Int, stroke: Boolean, action: () -> Unit) = label(text, 14f, fg, true).apply {
+            gravity = Gravity.CENTER
+            background = if (stroke) rounded(bg, 14, line) else rounded(bg, 14)
+            setPadding(dp(8), dp(14), dp(8), dp(14))
+            setOnClickListener { action() }
+        }
+        val lp = { LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) } }
+        if (tracked == null) {
+            bar.addView(btn("Takip et", ink, surface, true) {
+                d.dismiss()
+                quickWatch(o)
+            }, lp())
+            bar.addView(btn("Alarm kur", ink, surface, true) {
+                d.dismiss()
+                alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+            }, lp())
+        } else {
+            bar.addView(btn(if (tracked.watch) "Takibi yönet" else "Alarmı yönet", ink, surface, true) {
+                d.dismiss()
+                if (tracked.groupId != 0L) productAlarmDialog(tracked.groupId, o)
+                else alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+            }, lp())
+        }
+        bar.addView(btn("Siteye git", accentOn, gold, false) { openLink(o) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f))
+        sheet.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+        sheet.addView(bar)
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(120, 0, 0, 0))
+            setOnClickListener { d.dismiss() }
+        }
+        val h = (resources.displayMetrics.heightPixels * 0.88).toInt()
+        root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h).apply { gravity = Gravity.BOTTOM })
+        d.setContentView(root)
+        d.window?.let { w ->
+            w.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        sheet.translationY = h.toFloat()
+        d.setOnShowListener { sheet.animate().translationY(0f).setDuration(220).start() }
+        d.show()
+    }
+
+    /** Tek dokunuşla takip: aynı ürün birden çok sitedeyse hepsi, değilse bu ilan. Bildirim yok. */
+    private fun quickWatch(o: Offer) {
+        try {
+            val group = if (o.kind == Kind.MATCH) groupCandidates(o) else emptyList()
+            val unit = offerUnit(o)
+            if (group.size >= 2) {
+                val gid = System.currentTimeMillis()
+                val items = group.mapIndexed { i, c ->
+                    val cu = offerUnit(c)
+                    Alarm(id = gid + i, title = c.title, site = c.site, link = c.link, image = c.image,
+                        startPrice = c.price, lastPrice = c.price, lowest = c.price, target = 0.0, wantStock = false, inStock = true,
+                        lastCheck = 0L, status = "henüz kontrol edilmedi",
+                        unitAmount = if (unit != null) cu?.first ?: 0.0 else 0.0, unitName = if (unit != null) cu?.second.orEmpty() else "",
+                        groupId = gid, groupName = identity?.label ?: query, groupQuery = userInput, watch = true)
+                }
+                Alarms.addGroup(this, items)
+                Toast.makeText(this, "Takibe alındı: ${items.size} sitede", Toast.LENGTH_SHORT).show()
+            } else {
+                Alarms.add(this, Alarm(id = System.currentTimeMillis(), title = o.title, site = o.site, link = o.link, image = o.image,
+                    startPrice = o.price, lastPrice = o.price, lowest = o.price, target = 0.0, wantStock = false, inStock = true,
+                    lastCheck = 0L, status = "henüz kontrol edilmedi",
+                    unitAmount = unit?.first ?: 0.0, unitName = unit?.second.orEmpty(), watch = true))
+                Toast.makeText(this, "Takibe alındı", Toast.LENGTH_SHORT).show()
+            }
+            if (offers.isNotEmpty() && !running) render(final = finished)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Takibe alınamadı: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun openLink(o: Offer) {
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(o.link))) } catch (e: Exception) {}
     }
@@ -3412,7 +3591,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(12), dp(4), dp(12))
-            setOnClickListener { openLink(o) }
+            setOnClickListener { productSheet(o) }
             // Uzun basınca bu ilanı paylaş
             setOnLongClickListener { shareText("${o.title}\n${money(o.price)} · ${o.site}\n${o.link}"); true }
         }

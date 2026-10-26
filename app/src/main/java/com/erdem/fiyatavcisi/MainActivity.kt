@@ -1420,6 +1420,10 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Ürün sayısı: bir ürün alarmının bütün siteleri tek ürün sayılır */
+    private fun productCount(list: List<Alarm>) =
+        list.filter { it.groupId != 0L }.map { it.groupId }.toSet().size + list.count { it.groupId == 0L }
+
     private fun recentSearches(): List<String> =
         prefs.getString("recent", "").orEmpty().split("\n").filter { it.isNotBlank() }
 
@@ -3724,7 +3728,7 @@ class MainActivity : Activity() {
         val hours = listOf(1, 2, 4, 6, 12)
         choiceRow(al, "Kontrol sıklığı", "Sık kontrol biraz daha pil harcar",
             hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
-        actionRow(al, "Alarmlarım", null, "${Alarms.load(this).size} ürün takipte", "Aç") { showAlarms() }
+        actionRow(al, "Alarmlarım", null, "${productCount(Alarms.load(this))} ürün takipte", "Aç") { showAlarms() }
 
         // Hafıza
         val mem = settingsCard("Hafıza")
@@ -3994,7 +3998,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
         }
-        head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${list.size})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${productCount(list)})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(label("Ana sayfa", 13f, muted, true).apply {
             setPadding(dp(10), dp(6), dp(10), dp(6))
             setOnClickListener { status.visibility = View.GONE; showHome() }

@@ -75,7 +75,7 @@ object Update {
      */
     fun install(a: Activity, progress: (Int) -> Unit): Boolean {
         if (!a.packageManager.canRequestPackageInstalls()) {
-            Toast.makeText(a, "Fiyat Avcısı'nın güncelleme kurmasına izin ver, sonra geri gelip tekrar dokun.", Toast.LENGTH_LONG).show()
+            Toast.makeText(a, "İzci'nin güncelleme kurmasına izin ver, sonra geri gelip tekrar dokun.", Toast.LENGTH_LONG).show()
             try {
                 a.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.packageName)))
             } catch (e: Exception) { browser(a) }

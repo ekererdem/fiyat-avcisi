@@ -367,7 +367,7 @@ class MainActivity : Activity() {
 
     private fun initials(): String {
         val n = profileName().trim().ifEmpty { profileMail().substringBefore('@') }
-        if (n.isEmpty()) return "FA"
+        if (n.isEmpty()) return "İ"
         val parts = n.split(Regex("[\\s._-]+")).filter { it.isNotEmpty() }
         return (parts.take(2).joinToString("") { it.take(1) }).uppercase(Locale("tr", "TR"))
     }
@@ -432,7 +432,7 @@ class MainActivity : Activity() {
             item(R.drawable.ic_share, "Raporu paylaş") { shareReport() }
         }
         panel.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
-        panel.addView(label("Fiyat Avcısı ${Update.currentName(this)}", 12f, muted).apply { setPadding(dp(6), 0, 0, 0) })
+        panel.addView(label("İzci ${Update.currentName(this)}", 12f, muted).apply { setPadding(dp(6), 0, 0, 0) })
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(110, 0, 0, 0))
@@ -831,7 +831,7 @@ class MainActivity : Activity() {
             .setMessage("Hatanın ayrıntısı aşağıda. Kopyala'ya basıp bana gönderirsen düzeltirim.\n\n" + trace.take(1500))
             .setPositiveButton("Kopyala") { _, _ ->
                 (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                    .setPrimaryClip(ClipData.newPlainText("Fiyat Avcısı hata", "FİYAT AVCISI HATA\n" + trace))
+                    .setPrimaryClip(ClipData.newPlainText("İzci hata", "İZCİ HATA\n" + trace))
                 Toast.makeText(this, "Hata kopyalandı", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Kapat", null)
@@ -1021,7 +1021,7 @@ class MainActivity : Activity() {
         }
         avatarBox.addView(gearDot, FrameLayout.LayoutParams(dp(13), dp(13)).apply { gravity = Gravity.TOP or Gravity.END })
         header.addView(avatarBox, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
-        header.addView(label("Fiyat Avcısı", 20f, ink, true).apply { setOnClickListener { showDrawer() } },
+        header.addView(label("İzci", 20f, ink, true).apply { setOnClickListener { showDrawer() } },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header)
 
@@ -3160,7 +3160,7 @@ class MainActivity : Activity() {
         val hist = History.product(this, productKey())
         if (hist.size >= 2) sb.append("\nSon ${History.today() - hist.first().first + 1} günün en düşüğü: ")
             .append(money(hist.minOf { it.second })).append("\n")
-        sb.append("\nFiyat Avcısı ile bulundu")
+        sb.append("\nİzci ile bulundu")
         shareText(sb.toString())
     }
 
@@ -3625,7 +3625,7 @@ class MainActivity : Activity() {
         }
 
         // Geliştirici modu gizli: sürüm yazısına 7 kez dokununca açılır/kapanır
-        results.addView(label("Fiyat Avcısı · ${Update.currentName(this)}" + if (flag("devMode")) " · geliştirici" else "", 12f, muted).apply {
+        results.addView(label("İzci · ${Update.currentName(this)}" + if (flag("devMode")) " · geliştirici" else "", 12f, muted).apply {
             setOnClickListener {
                 devTaps++
                 if (devTaps >= 7) {
@@ -3904,7 +3904,7 @@ class MainActivity : Activity() {
         results.addView(head)
         if (list.isEmpty()) {
             noticeCard("Henüz alarm yok. Arama sonuçlarında bir ilanın 🔕 düğmesine dokun ya da Trendyol, Hepsiburada gibi " +
-                "uygulamalarda bir ürünü Paylaş → Fiyat Avcısı ile gönder.", ink, amberBg)
+                "uygulamalarda bir ürünü Paylaş → İzci ile gönder.", ink, amberBg)
             return
         }
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
@@ -4015,7 +4015,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
         }
-        noticeCard("Xiaomi telefonlarda arka plan kontrolünün çalışması için: Ayarlar → Uygulamalar → Fiyat Avcısı → " +
+        noticeCard("Xiaomi telefonlarda arka plan kontrolünün çalışması için: Ayarlar → Uygulamalar → İzci → " +
             "Pil tasarrufu → Kısıtlama yok.", muted, greyBg)
     }
 
@@ -4104,7 +4104,7 @@ class MainActivity : Activity() {
     private fun buildReport(matches: List<Offer>, others: List<Offer>) {
         report.setLength(0)
         val total = android.os.SystemClock.elapsedRealtime() - startedAt
-        report.append("FİYAT AVCISI · DENEME 53\nGiriş: ").append(userInput)
+        report.append("İZCİ · DENEME 53\nGiriş: ").append(userInput)
             .append("\nDurum: ").append(if (finished) "tamamlandı" else "HÂLÂ SÜRÜYORDU (rapor erken kopyalandı)")
             .append("\nSüre: ").append(elapsedText(total))
             .append(if (resolvedAt > 0) " (tanıma ${elapsedText(resolvedAt - startedAt)})" else "")
@@ -4212,7 +4212,7 @@ class MainActivity : Activity() {
         if (report.isEmpty()) return
         if (running) Toast.makeText(this, "Arama henüz bitmedi; rapor yarım olabilir", Toast.LENGTH_LONG).show()
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("Fiyat Avcısı raporu", report.toString()))
+        cm.setPrimaryClip(ClipData.newPlainText("İzci raporu", report.toString()))
         Toast.makeText(this, "Rapor kopyalandı", Toast.LENGTH_SHORT).show()
     }
 

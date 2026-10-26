@@ -212,7 +212,14 @@ class MainActivity : Activity() {
     private fun flag(k: String, def: Boolean = false) = if (k == "devMode") false else settings.getBoolean(k, def)
     private fun siteOn(name: String) = settings.getBoolean("site_$name", true)
     private var screen = "home"           // home / results / alarms / settings
-        set(v) { field = v; updateNav() }
+        set(v) {
+            field = v
+            updateNav()
+            // Ana sayfada üstteki arama kutusu gizli: ortadaki barkod kartı ve arama kutusu kullanılır
+            if (::searchBar.isInitialized) searchBar.visibility = if (v == "home") View.GONE else View.VISIBLE
+        }
+    private lateinit var searchBar: LinearLayout
+    private var homeInput: EditText? = null
 
     // Alt menü çubuğu: Ana sayfa, Barkod, Alarmlar, Ayarlar
     private lateinit var navBar: LinearLayout
@@ -1096,14 +1103,14 @@ class MainActivity : Activity() {
         root.addView(header)
 
         // Arama kutusu: hap biçimi, içinde barkod ve Ara düğmeleri
-        val searchRow = LinearLayout(this).apply {
+        searchBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = rounded(greyBg, 28)
             setPadding(dp(4), dp(4), dp(5), dp(4))
         }
         // Solda barkod düğmesi
-        searchRow.addView(iconButton(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() }.apply {
+        searchBar.addView(iconButton(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() }.apply {
             layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(2) }
         })
         input = EditText(this).apply {
@@ -1119,9 +1126,9 @@ class MainActivity : Activity() {
                 if (id == EditorInfo.IME_ACTION_SEARCH) { startTest(); true } else false
             }
         }
-        searchRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        searchBar.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sağda yeşil yuvarlak büyüteç: aramayı başlatır (klavyedeki ara tuşu da çalışır)
-        searchRow.addView(ImageView(this).apply {
+        searchBar.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_search)
             imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
             contentDescription = "Ara"
@@ -1129,7 +1136,7 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
             setOnClickListener { startTest() }
         }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(6) })
-        root.addView(searchRow, LinearLayout.LayoutParams(
+        root.addView(searchBar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(14), dp(2), dp(14), dp(8)) })
 
@@ -1312,24 +1319,25 @@ class MainActivity : Activity() {
             ).apply { topMargin = dp(8) })
         }
 
-        homeTracking()
+        homeHero()
 
         val recent = recentSearches()
-        results.addView(label(if (recent.isNotEmpty()) "Son aramalar" else "Örnek aramalar", 18f, ink, true)
-            .apply { setPadding(dp(4), dp(22), dp(4), dp(10)) })
+        results.addView(label(if (recent.isNotEmpty()) "Son aramalar" else "Örnek aramalar", 14f, muted, true)
+            .apply { setPadding(dp(4), dp(28), dp(4), dp(10)) })
         val flow = FlowLayout(this, dp(8))
         (recent.ifEmpty { listOf("iphone 16 128gb", "nescafe gold 200 gr", "dior sauvage edt 100 ml", "prima 4 numara") })
             .forEach { q ->
                 flow.addView(pill(q, ink, paper, size = 14f).apply {
                     background = rounded(paper, 20, line)
                     setPadding(dp(14), dp(8), dp(14), dp(8))
-                    // Dokununca sadece arama kutusuna yazar: düzenleyip Ara'ya basılır
+                    // Dokununca sadece arama kutusuna yazar: düzenleyip aramaya basılır
                     setOnClickListener {
-                        input.setText(q)
-                        input.setSelection(q.length)
-                        input.requestFocus()
+                        val box = homeInput ?: input
+                        box.setText(q)
+                        box.setSelection(q.length)
+                        box.requestFocus()
                         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                            .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+                            .showSoftInput(box, InputMethodManager.SHOW_IMPLICIT)
                     }
                 })
             }
@@ -1343,6 +1351,77 @@ class MainActivity : Activity() {
                 showHome()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    /** Ana sayfa: ortada büyük barkod kartı, altında arama kutusu (mağaza modu + sade) */
+    private fun homeHero() {
+        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(28), dp(4), 0) }
+        // Barkod kartı
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = rounded(surface, 28, line)
+            setPadding(dp(20), dp(30), dp(20), dp(26))
+            setOnClickListener { scanBarcode() }
+        }
+        card.addView(FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold); setStroke(dp(10), greenBg) }
+            contentDescription = "Barkod okut"
+            setOnClickListener { scanBarcode() }
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_barcode)
+                imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
+            }, FrameLayout.LayoutParams(dp(62), dp(62)).apply { gravity = Gravity.CENTER })
+        }, LinearLayout.LayoutParams(dp(150), dp(150)))
+        card.addView(TextView(this).apply {
+            text = "Barkodu okut"
+            textSize = 26f
+            setTextColor(ink)
+            gravity = Gravity.CENTER
+            typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { android.graphics.Typeface.DEFAULT_BOLD }
+            letterSpacing = -0.02f
+            setPadding(0, dp(16), 0, 0)
+        })
+        card.addView(label("Raftaki fiyat iyi mi, hemen gör", 14f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
+        wrap.addView(card)
+        // Arama kutusu
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(greyBg, 28)
+            setPadding(dp(18), dp(6), dp(6), dp(6))
+        }
+        bar.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_search)
+            imageTintList = android.content.res.ColorStateList.valueOf(muted)
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) })
+        val hi = EditText(this).apply {
+            hint = "ya da ürün adını yaz"
+            setSingleLine()
+            textSize = 16f
+            setTextColor(ink)
+            setHintTextColor(hintColor)
+            background = null
+            setPadding(0, dp(8), 0, dp(8))
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+        }
+        val go = {
+            val q = hi.text.toString().trim()
+            if (q.isNotEmpty()) { input.setText(q); startTest() }
+        }
+        hi.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEARCH) { go(); true } else false }
+        homeInput = hi
+        bar.addView(hi, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_arrow)
+            imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
+            contentDescription = "Ara"
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+            setOnClickListener { go() }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        wrap.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
+        results.addView(wrap)
     }
 
     /** Ana sayfa: iki sütun — solda Alarmlar, sağda Takip; her birinde en fazla 3 ürün kutucuğu */
@@ -1716,6 +1795,7 @@ class MainActivity : Activity() {
         if (userInput.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
+        searchBar.visibility = View.VISIBLE
         if (resultsScroll.visibility != View.VISIBLE) toggleBrowser()
         stopAll()
         running = true

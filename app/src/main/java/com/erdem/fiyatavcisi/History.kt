@@ -48,13 +48,13 @@ object History {
 }
 
 /** Küçük fiyat grafiği: günlere göre çizgi, son nokta vurgulu */
-class Sparkline(ctx: Context, private val points: List<Pair<Long, Double>>, private val color: Int, private val gridColor: Int) : View(ctx) {
+class Sparkline(ctx: Context, private val points: List<Pair<Long, Double>>, private val lineColor: Int, private val gridColor: Int) : View(ctx) {
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 2.5f * resources.displayMetrics.density
-        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; this.color = color
+        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; color = lineColor
     }
-    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; this.color = color }
-    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1f; this.color = gridColor }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = lineColor }
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1f; color = gridColor }
 
     override fun onDraw(c: Canvas) {
         if (points.size < 2) return
@@ -66,7 +66,8 @@ class Sparkline(ctx: Context, private val points: List<Pair<Long, Double>>, priv
         val minY = points.minOf { it.second }
         val maxY = points.maxOf { it.second }.let { if (it == minY) minY + 1 else it }
         fun x(d: Long) = pad + (d - minX) / (maxX - minX) * w
-        fun y(v: Double) = (pad + h - ((v - minY) / (maxY - minY)).toFloat() * h)
+        val flat = points.maxOf { it.second } == points.minOf { it.second }
+        fun y(v: Double) = if (flat) pad + h / 2 else (pad + h - ((v - minY) / (maxY - minY)).toFloat() * h)
         c.drawLine(pad, pad + h, pad + w, pad + h, grid)
         val p = Path()
         points.forEachIndexed { i, (d, v) -> if (i == 0) p.moveTo(x(d), y(v)) else p.lineTo(x(d), y(v)) }

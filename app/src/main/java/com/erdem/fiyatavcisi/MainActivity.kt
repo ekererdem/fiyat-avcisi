@@ -3460,11 +3460,17 @@ class MainActivity : Activity() {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
                         setPadding(0, dp(12), 0, dp(12))
-                        setOnClickListener { productSheet(x) }
+                        // Dokununca o sitedeki ürün sayfası açılır; uzun basınca İzci'deki sayfası
+                        setOnClickListener { openLink(x) }
+                        setOnLongClickListener { productSheet(x); true }
                         addView(label("● ", 12f, siteColors[x.site] ?: muted))
                         addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, ink).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
                             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                         addView(label(money(x.price), 15f, if (x.price < o.price) green else ink, true))
+                        addView(ImageView(this@MainActivity).apply {
+                            setImageResource(R.drawable.ic_open)
+                            imageTintList = android.content.res.ColorStateList.valueOf(muted)
+                        }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(10) })
                     })
                     col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
                 }

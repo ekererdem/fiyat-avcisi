@@ -3559,27 +3559,55 @@ class MainActivity : Activity() {
                 addView(label(text, 12f, if (on) green else ink, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
         }
-        act(R.drawable.ic_bell, if (a.watch) "Bildirim aç" else "Bildirim açık", !a.watch) {
-            val ids = items.map { it.id }.toSet()
-            val on = a.watch
-            Alarms.save(this, Alarms.load(this).map { if (it.id in ids) it.copy(watch = !on) else it })
-            if (on) askNotificationPermission()
-            Toast.makeText(this, if (on) "Bildirim açıldı: fiyat düşünce haber veririm" else "Bildirim kapandı, takipte kalıyor", Toast.LENGTH_SHORT).show()
-            alarmPage(gid, a.id)
+        val ids = items.map { it.id }.toSet()
+        // Takip et: takipteyse çıkarma sorusu; alarmdaysa bildirimsiz takibe çevirir
+        act(R.drawable.ic_watch, if (a.watch) "Takipte" else "Takip et", a.watch) {
+            if (a.watch) {
+                AlertDialog.Builder(this).setTitle("Takipten çıkarılsın mı?")
+                    .setPositiveButton("Çıkar") { _, _ ->
+                        if (gid != 0L) Alarms.removeGroup(this, gid) else Alarms.remove(this, a.id)
+                        itemGoBack()
+                    }.setNegativeButton("Vazgeç", null).show()
+            } else {
+                Alarms.save(this, Alarms.load(this).map { if (it.id in ids) it.copy(watch = true) else it })
+                Toast.makeText(this, "Takibe çevrildi: bildirim gelmeyecek", Toast.LENGTH_SHORT).show()
+                alarmPage(gid, a.id)
+            }
         }
-        act(R.drawable.ic_search, "Ara ve güncelle", false) {
-            input.setText(a.groupQuery.ifEmpty { a.groupName.ifEmpty { a.title.split(" ").take(6).joinToString(" ") } })
-            if (gid != 0L) alarmRefresh = gid
-            startTest()
+        // Alarm kur: hedef fiyat sorulur; alarm varsa hedef değiştirilir ya da alarm silinir
+        act(R.drawable.ic_bell, if (a.watch) "Alarm kur" else "Alarm var", !a.watch) {
+            val unit = a.unitAmount > 0
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
+            val cur = if (unit) a.unitPrice() else a.lastPrice.takeIf { it > 0 }
+            if (cur != null) box.addView(label("Şu an: " + (if (unit) Alarms.unitText(cur, a.unitName) else money(cur)), 13f, muted))
+            val tIn = EditText(this).apply {
+                hint = if (unit) "Hedef (TL/${a.unitName})" else "Hedef fiyat (TL)"
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                val t0 = if (unit) a.unitTarget else a.target
+                if (!a.watch && t0 > 0) setText(Alarms.unitText(t0, "").substringBefore(" TL"))
+            }
+            box.addView(tIn)
+            box.addView(label("Boş bırakırsan her ucuzlamada haber veririm.", 12f, muted).apply { setPadding(0, dp(4), 0, 0) })
+            AlertDialog.Builder(this).setTitle(if (a.watch) "Fiyat alarmı kur" else "Alarm")
+                .setView(box)
+                .setPositiveButton("Kaydet") { _, _ ->
+                    val t = tIn.text.toString().replace(".", "").replace(",", ".").toDoubleOrNull() ?: 0.0
+                    Alarms.save(this, Alarms.load(this).map {
+                        if (it.id in ids) it.copy(watch = false, target = if (unit) 0.0 else t, unitTarget = if (unit) t else 0.0) else it
+                    })
+                    askNotificationPermission()
+                    Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                    alarmPage(gid, a.id)
+                }
+                .apply {
+                    if (!a.watch) setNeutralButton("Alarmı sil") { _, _ ->
+                        if (gid != 0L) Alarms.removeGroup(this@MainActivity, gid) else Alarms.remove(this@MainActivity, a.id)
+                        itemGoBack()
+                    }
+                }
+                .setNegativeButton("Vazgeç", null).show()
         }
         act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
-        act(R.drawable.ic_bell_off, "Sil", false) {
-            AlertDialog.Builder(this).setTitle(if (a.watch) "Takipten çıkarılsın mı?" else "Alarm silinsin mi?")
-                .setPositiveButton("Sil") { _, _ ->
-                    if (gid != 0L) Alarms.removeGroup(this, gid) else Alarms.remove(this, a.id)
-                    itemGoBack()
-                }.setNegativeButton("Vazgeç", null).show()
-        }
         col.addView(acts)
 
         // Fiyat geçmişi

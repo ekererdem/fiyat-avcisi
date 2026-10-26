@@ -4372,115 +4372,121 @@ class MainActivity : Activity() {
             return
         }
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
-        // Ürün alarmları: bir kart, içinde siteler
+        // Akordiyon: kapalıyken küçük satır, dokununca ayrıntılar açılır
+        fun accordion(key: String, image: String, link: String, title: String, sub: String, price: String, priceColor: Int,
+                      detail: (LinearLayout) -> Unit) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 14, line)
+            }
+            val body = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), 0, dp(14), dp(12))
+                visibility = if (key in expandedAlarms) View.VISIBLE else View.GONE
+            }
+            val chev = label(if (key in expandedAlarms) "▴" else "▾", 14f, muted, true).apply { setPadding(dp(10), 0, 0, 0) }
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(8), dp(12), dp(8))
+                setOnClickListener {
+                    val open = body.visibility != View.VISIBLE
+                    body.visibility = if (open) View.VISIBLE else View.GONE
+                    chev.text = if (open) "▴" else "▾"
+                    if (open) expandedAlarms.add(key) else expandedAlarms.remove(key)
+                }
+                addView(ImageView(this@MainActivity).apply {
+                    background = rounded(Color.WHITE, 8)
+                    setPadding(dp(2), dp(2), dp(2), dp(2))
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    if (image.isNotEmpty()) loadImage(image, this, Uri.parse(link).let { u -> "${u.scheme}://${u.host}/" })
+                }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(title, 14f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+                    addView(label(sub, 12f, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label(price, 14f, priceColor, true).apply { setPadding(dp(8), 0, 0, 0) })
+                addView(chev)
+            })
+            detail(body)
+            card.addView(body)
+            results.addView(card, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) })
+        }
+        fun actions(body: LinearLayout, openPage: () -> Unit, delete: () -> Unit) {
+            body.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(10), 0, 0)
+                addView(label("Ürün sayfası", 13f, accentOn, true).apply {
+                    background = rounded(gold, 12)
+                    setPadding(dp(14), dp(8), dp(14), dp(8))
+                    setOnClickListener { openPage() }
+                })
+                addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                addView(label("Sil", 13f, red, true).apply {
+                    setPadding(dp(12), dp(8), dp(4), dp(8))
+                    setOnClickListener { delete() }
+                })
+            })
+        }
+        // Ürün alarmları (birden çok site)
         for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
             val best = Alarms.groupBest(items) ?: items.first()
             val unit = best.unitAmount > 0
             val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = rounded(surface, 14, line)
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                setOnClickListener { itemBack = alarmView; alarmPage(gid, best.id) }
+            accordion("g$gid", best.image, best.link, best.groupName.ifEmpty { best.title },
+                "${items.size} site · en uygun ${best.site}", Alarms.metric(best)?.let { fmt(it) } ?: "?", green) { body ->
+                val t = if (best.unitTarget > 0) best.unitTarget else best.target
+                if (!best.watch) body.addView(label(if (t > 0) "Hedef: ${fmt(t)}" else "Hedef: her ucuzlamada haber ver", 12f, muted).apply { setPadding(0, dp(2), 0, dp(4)) })
+                items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { a ->
+                    body.addView(LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dp(7), 0, dp(7))
+                        setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+                        addView(label("● ", 12f, siteColors[a.site] ?: muted))
+                        addView(label(a.site, 13f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                        addView(label((Alarms.metric(a)?.let { fmt(it) } ?: "?") + if (a.status.startsWith("fiyat okunamadı")) " · okunamadı" else "", 13f, muted))
+                    })
+                }
+                val gh = History.get(this, "g:$gid")
+                if (gh.size >= 2) {
+                    body.addView(Sparkline(this, gh, green, line), LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(6) })
+                    body.addView(label("Geçmiş ${gh.size} gün · en düşük ${fmt(gh.minOf { it.second })} · en yüksek ${fmt(gh.maxOf { it.second })}", 11f, muted))
+                }
+                if (items.any { it.lastCheck > 0 }) body.addView(label("Son kontrol ${df.format(java.util.Date(items.maxOf { it.lastCheck }))}", 11f, muted)
+                    .apply { setPadding(0, dp(4), 0, 0) })
+                actions(body, { itemBack = alarmView; alarmPage(gid, best.id) }) { Alarms.removeGroup(this, gid); showAlarms() }
             }
-            card.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(label("Ürün alarmı · ${items.size} site", 12f, gold, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(label("Ara ve güncelle", 13f, gold, true).apply {
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setOnClickListener { input.setText(best.groupQuery); alarmRefresh = best.groupId; startTest() }
-                })
-                addView(label("Sil", 13f, red, true).apply {
-                    setPadding(dp(8), dp(2), dp(2), dp(2))
-                    setOnClickListener { Alarms.removeGroup(this@MainActivity, gid); showAlarms() }
-                })
-            })
-            card.addView(label(best.groupName.ifEmpty { best.title }, 16f, ink, true).apply { setPadding(0, dp(4), 0, dp(2)) })
-            Alarms.metric(best)?.let { m ->
-                card.addView(label("En uygun: ${best.site} · ${fmt(m)}" + if (unit) " · ${money(best.lastPrice)}" else "", 14f, green, true))
-            }
-            val t = if (best.unitTarget > 0) best.unitTarget else best.target
-            card.addView(label(if (t > 0) "Hedef: ${fmt(t)}" else "Hedef: her ucuzlamada haber ver", 12f, muted).apply { setPadding(0, dp(2), 0, dp(6)) })
-            items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { a ->
-                card.addView(LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    setPadding(0, dp(4), 0, dp(4))
-                    setOnClickListener { itemBack = alarmView; alarmPage(gid, a.id) }
-                    addView(label("● ", 12f, siteColors[a.site] ?: muted))
-                    addView(label(a.site, 13f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(label((Alarms.metric(a)?.let { fmt(it) } ?: "?") + if (a.status.startsWith("fiyat okunamadı")) " · okunamadı" else "", 13f, muted))
-                })
-            }
-            // Fiyat geçmişi: her gün gruptaki en uygun (adet başı) fiyat
-            val gh = History.get(this, "g:$gid")
-            if (gh.size >= 2) {
-                card.addView(Sparkline(this, gh, green, line), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(6) })
-                card.addView(label("Geçmiş ${gh.size} gün · en düşük ${fmt(gh.minOf { it.second })} · en yüksek ${fmt(gh.maxOf { it.second })}", 11f, muted))
-            } else card.addView(label("Fiyat geçmişi her kontrolde günlük tutuluyor; grafik 2. günden itibaren görünür", 11f, muted)
-                .apply { setPadding(0, dp(4), 0, 0) })
-            if (items.any { it.lastCheck > 0 }) card.addView(label("Son kontrol ${df.format(java.util.Date(items.maxOf { it.lastCheck }))}", 11f, muted)
-                .apply { setPadding(0, dp(4), 0, 0) })
-            results.addView(card, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
         }
+        // Tek ilanlar
         for (a in list.filter { it.groupId == 0L }) {
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                background = rounded(surface, 14, line)
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                setOnClickListener { itemBack = alarmView; alarmPage(0L, a.id) }
+            accordion("a${a.id}", a.image, a.link, a.title, a.site + when (a.inStock) { false -> " · stokta yok"; true -> " · stokta"; else -> "" },
+                if (a.lastPrice > 0) money(a.lastPrice) else "?", if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink) { body ->
+                val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(2), 0, 0) }
+                if (a.startPrice > 0) chips.addView(pill("başta ${money(a.startPrice)}", ink, greyBg))
+                if (a.lowest > 0 && a.lowest < a.startPrice) chips.addView(pill("en düşük ${money(a.lowest)}", green, greenBg))
+                if (!a.watch) chips.addView(pill(when {
+                    a.unitTarget > 0 -> "hedef ${Alarms.unitText(a.unitTarget, a.unitName)}"
+                    a.target > 0 -> "hedef ${money(a.target)}"
+                    else -> "her düşüşte"
+                }, ink, amberBg))
+                a.unitPrice()?.let { chips.addView(pill(Alarms.unitText(it, a.unitName), ink, greyBg)) }
+                body.addView(chips)
+                val oh = History.offer(this, a.link)
+                if (oh.size >= 2) body.addView(Sparkline(this, oh, green, line), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(6) })
+                body.addView(label((if (a.lastCheck > 0) "Son kontrol ${df.format(java.util.Date(a.lastCheck))} · " else "") + a.status, 11f, muted)
+                    .apply { setPadding(0, dp(6), 0, 0) })
+                actions(body, { itemBack = alarmView; alarmPage(0L, a.id) }) { Alarms.remove(this, a.id); showAlarms() }
             }
-            val iv = ImageView(this).apply {
-                background = rounded(surface, 12, line)
-                setPadding(dp(4), dp(4), dp(4), dp(4))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
-            }
-            card.addView(iv, LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(12) })
-            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            col.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(pill(a.site, Color.WHITE, siteColors[a.site] ?: ink, bold = true))
-                addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
-                addView(label("Sil", 13f, red, true).apply {
-                    setPadding(dp(10), dp(2), dp(2), dp(2))
-                    setOnClickListener { Alarms.remove(this@MainActivity, a.id); showAlarms() }
-                })
-            })
-            col.addView(label(a.title, 14f, ink).apply {
-                maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, dp(4))
-            })
-            val now = if (a.lastPrice > 0) money(a.lastPrice) else "?"
-            col.addView(label(now, 18f, if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
-            val chips = FlowLayout(this, dp(6)).apply { setPadding(0, dp(6), 0, 0) }
-            if (a.startPrice > 0) chips.addView(pill("başta ${money(a.startPrice)}", ink, greyBg))
-            if (a.lowest > 0 && a.lowest < a.startPrice) chips.addView(pill("en düşük ${money(a.lowest)}", green, greenBg))
-            chips.addView(pill(when {
-                a.unitTarget > 0 -> "hedef ${Alarms.unitText(a.unitTarget, a.unitName)}"
-                a.target > 0 -> "hedef ${money(a.target)}"
-                else -> "her düşüşte"
-            }, ink, amberBg))
-            a.unitPrice()?.let { chips.addView(pill(Alarms.unitText(it, a.unitName), ink, greyBg)) }
-            if (a.wantStock) chips.addView(pill(when (a.inStock) { false -> "stok bekleniyor"; true -> "stokta"; else -> "stok takibi" },
-                if (a.inStock == false) orange else green, if (a.inStock == false) orangeBg else greenBg))
-            col.addView(chips)
-            val oh = History.offer(this, a.link)
-            if (oh.size >= 2) col.addView(Sparkline(this, oh, green, line), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(6) })
-            col.addView(label(
-                (if (a.lastCheck > 0) "Son kontrol ${df.format(java.util.Date(a.lastCheck))} · " else "") + a.status,
-                11f, muted
-            ).apply { setPadding(0, dp(6), 0, 0) })
-            card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            results.addView(card, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
         }
     }
+
+    private val expandedAlarms = mutableSetOf<String>()
 
     /** Başka uygulamadan "Paylaş" ile gelen ürün linki: karşılaştır ya da alarm kur */
     private fun handleShare(i: Intent?) {

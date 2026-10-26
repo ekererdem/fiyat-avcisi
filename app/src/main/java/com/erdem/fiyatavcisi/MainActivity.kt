@@ -1088,12 +1088,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = rounded(greyBg, 28)
-            setPadding(dp(16), dp(4), dp(5), dp(4))
+            setPadding(dp(4), dp(4), dp(5), dp(4))
         }
-        searchRow.addView(ImageView(this).apply {
-            setImageResource(R.drawable.ic_search)
-            imageTintList = android.content.res.ColorStateList.valueOf(muted)
-        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
+        // Solda barkod düğmesi
+        searchRow.addView(iconButton(R.drawable.ic_barcode, "Barkod okut") { scanBarcode() }.apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(2) }
+        })
         input = EditText(this).apply {
             hint = "Ürün adı, model kodu ya da barkod"
             setSingleLine()
@@ -1108,14 +1108,14 @@ class MainActivity : Activity() {
             }
         }
         searchRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        // Yeşil yuvarlak barkod düğmesi (arama klavyedeki Ara tuşuyla başlar)
+        // Sağda yeşil yuvarlak büyüteç: aramayı başlatır (klavyedeki ara tuşu da çalışır)
         searchRow.addView(ImageView(this).apply {
-            setImageResource(R.drawable.ic_barcode)
+            setImageResource(R.drawable.ic_search)
             imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
-            contentDescription = "Barkod okut"
+            contentDescription = "Ara"
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
-            setOnClickListener { scanBarcode() }
+            setOnClickListener { startTest() }
         }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(6) })
         root.addView(searchRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT

@@ -176,14 +176,15 @@ class MainActivity : Activity() {
         if (dark) {
             // Loş lacivert (eski Twitter "Dim" teması gibi)
             paper = c("#15202B"); surface = c("#1C2A38"); greyBg = c("#253341"); ink = c("#F2F5F7"); muted = c("#8B98A5")
-            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#4CC38A"); accentOn = c("#15202B"); brand = c("#F2C14E")
-            green = c("#4CC38A"); red = c("#F4908A"); orange = c("#F5A962")
-            greenBg = c("#16352E"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#363423")
+            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#F2C14E"); accentOn = c("#15202B"); brand = c("#F2C14E")
+            // Vurgu rengi: İzci logosunun sarısı (önceden yeşildi)
+            green = c("#F2C14E"); red = c("#F4908A"); orange = c("#F5A962")
+            greenBg = c("#3A3218"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#363423")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
-            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0F6B3A"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
-            green = c("#0F6B3A"); red = c("#B42318"); orange = c("#B54708")
-            greenBg = c("#EAF5EE"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#FFF6DB")
+            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#A16207"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
+            green = c("#A16207"); red = c("#B42318"); orange = c("#B54708")
+            greenBg = c("#FFF4D6"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#FFF6DB")
         }
     }
 

@@ -3469,10 +3469,6 @@ class MainActivity : Activity() {
                         addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, ink).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
                             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                         addView(label(money(x.price), 15f, if (x.price < o.price) green else ink, true))
-                        addView(ImageView(this@MainActivity).apply {
-                            setImageResource(R.drawable.ic_open)
-                            imageTintList = android.content.res.ColorStateList.valueOf(muted)
-                        }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(10) })
                     })
                     col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
                 }
@@ -3641,10 +3637,6 @@ class MainActivity : Activity() {
                     addView(label("● ", 12f, siteColors[x.site] ?: muted))
                     addView(label(x.site, 14f, if (x.id == a.id) gold else ink, x.id == a.id), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true))
-                    addView(ImageView(this@MainActivity).apply {
-                        setImageResource(R.drawable.ic_open)
-                        imageTintList = android.content.res.ColorStateList.valueOf(muted)
-                    }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(10) })
                 })
                 col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
             }

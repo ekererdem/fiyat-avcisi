@@ -899,6 +899,7 @@ class MainActivity : Activity() {
         when {
             resultsScroll.visibility != View.VISIBLE -> toggleBrowser()
             running -> { stopAll(); running = false; progress.visibility = View.GONE; goHome() }
+            screen == "product" -> backToResults()
             screen == "settings" || screen == "alarms" || screen == "watch" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
@@ -3334,25 +3335,22 @@ class MainActivity : Activity() {
         if (open) body()
     }
 
-    /** Ürün kartı: alttan açılan sayfa. Fotoğraf, fiyat, geçmiş, diğer siteler; takip et / alarm kur / siteye git */
+    /** Ürün sayfası: Fotoğraf, fiyat, geçmiş, diğer siteler; takip et / alarm kur / siteye git */
     private fun productSheet(o: Offer) {
-        val d = android.app.Dialog(this, if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
-        val sheet = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(paper)
-                cornerRadii = floatArrayOf(dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), 0f, 0f, 0f, 0f)
-            }
-            isClickable = true
-        }
-        // Tutamak
-        sheet.addView(View(this).apply { background = rounded(line, 3) },
-            LinearLayout.LayoutParams(dp(40), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(10); bottomMargin = dp(4) })
-        val scroll = ScrollView(this)
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(16)) }
-        scroll.addView(col)
-        sheet.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-
+        if (running) return
+        if (screen == "results") resultsScrollY = resultsScroll.scrollY
+        screen = "product"
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        status.visibility = View.GONE
+        results.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(16)) }
+        results.addView(col)
+        // Geri
+        col.addView(label("‹  Sonuçlara dön", 14f, gold, true).apply {
+            setPadding(0, dp(6), 0, dp(10))
+            setOnClickListener { backToResults() }
+        })
         // Fotoğraf
         col.addView(ImageView(this).apply {
             background = rounded(Color.WHITE, 16)
@@ -3400,6 +3398,38 @@ class MainActivity : Activity() {
         if (tracked != null) col.addView(label(if (tracked.watch) "Bu ürün takip listende" else "Bu ürün için alarm kurulu", 13f, gold, true)
             .apply { setPadding(0, dp(12), 0, 0) })
 
+        // İşlemler: takip et · alarm kur · paylaş · siteye git (simgeli düğmeler)
+        val acts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(16), 0, 0) }
+        fun act(icon: Int, text: String, on: Boolean, action: () -> Unit) {
+            acts.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = rounded(if (on) greenBg else surface, 14, line)
+                setPadding(dp(4), dp(12), dp(4), dp(10))
+                contentDescription = text
+                setOnClickListener { action() }
+                addView(ImageView(this@MainActivity).apply {
+                    setImageResource(icon)
+                    imageTintList = android.content.res.ColorStateList.valueOf(if (on) green else ink)
+                }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                addView(label(text, 12f, if (on) green else ink, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        }
+        val watching = tracked?.watch == true
+        val alarmOn = tracked != null && !tracked.watch
+        act(R.drawable.ic_watch, if (watching) "Takipte" else "Takip et", watching) {
+            if (tracked == null) { quickWatch(o); productSheet(o) }
+            else if (tracked.groupId != 0L) productAlarmDialog(tracked.groupId, o)
+            else alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+        }
+        act(R.drawable.ic_bell, if (alarmOn) "Alarm var" else "Alarm kur", alarmOn) {
+            if (tracked != null && tracked.groupId != 0L) productAlarmDialog(tracked.groupId, o)
+            else alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
+        }
+        act(R.drawable.ic_share, "Paylaş", false) { shareText("${o.title}\n${money(o.price)} · ${o.site}\n${o.link}") }
+        act(R.drawable.ic_open, "Siteye git", false) { openLink(o) }
+        col.addView(acts)
+
         // Fiyat geçmişi: bu ilan
         fun historyBlock(title: String, pts: List<Pair<Long, Double>>) {
             col.addView(label(title, 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(6)) })
@@ -3422,7 +3452,7 @@ class MainActivity : Activity() {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
                         setPadding(0, dp(12), 0, dp(12))
-                        setOnClickListener { d.dismiss(); productSheet(x) }
+                        setOnClickListener { productSheet(x) }
                         addView(label("● ", 12f, siteColors[x.site] ?: muted))
                         addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, ink).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
                             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -3433,54 +3463,19 @@ class MainActivity : Activity() {
             }
         }
 
-        // Alt düğmeler
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(14), dp(10), dp(14), dp(14))
-            setBackgroundColor(surface)
-        }
-        fun btn(text: String, fg: Int, bg: Int, stroke: Boolean, action: () -> Unit) = label(text, 14f, fg, true).apply {
-            gravity = Gravity.CENTER
-            background = if (stroke) rounded(bg, 14, line) else rounded(bg, 14)
-            setPadding(dp(8), dp(14), dp(8), dp(14))
-            setOnClickListener { action() }
-        }
-        val lp = { LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) } }
-        if (tracked == null) {
-            bar.addView(btn("Takip et", ink, surface, true) {
-                d.dismiss()
-                quickWatch(o)
-            }, lp())
-            bar.addView(btn("Alarm kur", ink, surface, true) {
-                d.dismiss()
-                alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
-            }, lp())
-        } else {
-            bar.addView(btn(if (tracked.watch) "Takibi yönet" else "Alarmı yönet", ink, surface, true) {
-                d.dismiss()
-                if (tracked.groupId != 0L) productAlarmDialog(tracked.groupId, o)
-                else alarmDialog(o.title, o.link, o.site, o.image, o.price, available = true, offer = o)
-            }, lp())
-        }
-        bar.addView(btn("Siteye git", accentOn, gold, false) { openLink(o) },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f))
-        sheet.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
-        sheet.addView(bar)
+        resultsScroll.post { resultsScroll.scrollTo(0, 0) }
+    }
 
-        val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(120, 0, 0, 0))
-            setOnClickListener { d.dismiss() }
-        }
-        val h = (resources.displayMetrics.heightPixels * 0.88).toInt()
-        root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h).apply { gravity = Gravity.BOTTOM })
-        d.setContentView(root)
-        d.window?.let { w ->
-            w.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        sheet.translationY = h.toFloat()
-        d.setOnShowListener { sheet.animate().translationY(0f).setDuration(220).start() }
-        d.show()
+    private var resultsScrollY = 0
+
+    private fun backToResults() {
+        if (offers.isEmpty()) { goHome(); return }
+        filterBar.visibility = View.VISIBLE
+        status.visibility = View.VISIBLE
+        chipsScroll.visibility = if (running) View.VISIBLE else View.GONE
+        render(final = finished)
+        val y = resultsScrollY
+        resultsScroll.post { resultsScroll.scrollTo(0, y) }
     }
 
     /** Tek dokunuşla takip: aynı ürün birden çok sitedeyse hepsi, değilse bu ilan. Bildirim yok. */
@@ -3507,7 +3502,7 @@ class MainActivity : Activity() {
                     unitAmount = unit?.first ?: 0.0, unitName = unit?.second.orEmpty(), watch = true))
                 Toast.makeText(this, "Takibe alındı", Toast.LENGTH_SHORT).show()
             }
-            if (offers.isNotEmpty() && !running) render(final = finished)
+            if (offers.isNotEmpty() && !running && screen != "product") render(final = finished)
         } catch (e: Exception) {
             Toast.makeText(this, "Takibe alınamadı: ${e.message}", Toast.LENGTH_LONG).show()
         }

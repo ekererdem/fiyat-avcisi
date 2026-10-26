@@ -1062,25 +1062,27 @@ class MainActivity : Activity() {
         val header = FrameLayout(this).apply {
             setPadding(dp(16), dp(14), dp(16), dp(10))
         }
-        // Sol üst: oyma İzci logosu (yuvarlak içinde); ortada marka yazısı. Dokununca ana sayfa.
-        header.addView(FrameLayout(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#15202B")) }
-            contentDescription = "Ana sayfa"
+        // Ortada marka: yuvarlak içinde oyma İzci logosu + yazı. Dokununca ana sayfa.
+        header.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = "İzci, ana sayfa"
             setOnClickListener { if (!running) goHome() }
-            addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.drawable.ic_logo)
-                imageTintList = android.content.res.ColorStateList.valueOf(brand)
-            }, FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER })
-        }, FrameLayout.LayoutParams(dp(40), dp(40)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
-        header.addView(TextView(this).apply {
-            text = "İzci"
-            textSize = 26f
-            setTextColor(ink)
-            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-            letterSpacing = -0.01f
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setOnClickListener { if (!running) goHome() }
+            addView(FrameLayout(this@MainActivity).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (dark) c("#253341") else c("#15202B")) }
+                addView(ImageView(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_logo)
+                    imageTintList = android.content.res.ColorStateList.valueOf(brand)
+                }, FrameLayout.LayoutParams(dp(22), dp(22)).apply { gravity = Gravity.CENTER })
+            }, LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginEnd = dp(10) })
+            addView(TextView(this@MainActivity).apply {
+                text = "İzci"
+                textSize = 26f
+                setTextColor(ink)
+                typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+                letterSpacing = -0.01f
+                includeFontPadding = false
+            })
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { gravity = Gravity.CENTER })
         root.addView(header)
 

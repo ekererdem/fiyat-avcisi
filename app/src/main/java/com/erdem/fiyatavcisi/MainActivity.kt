@@ -295,17 +295,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun ruleOn(k: String): Boolean = when (settings.getInt("cat_${currentCategory}_$k", 0)) {
-        1 -> true
-        2 -> false
-        else -> flag(k)
-    }
+    // Filtre kuralları her kategoride aynı uygulanır (kategoriye özel ayar kaldırıldı)
+    private fun ruleOn(k: String): Boolean = flag(k)
 
-    private fun ruleMinRating(): Float =
-        settings.getFloat("cat_${currentCategory}_minRating", -1f).let { if (it >= 0) it else settings.getFloat("minRating", 0f) }
+    private fun ruleMinRating(): Float = settings.getFloat("minRating", 0f)
 
-    private fun ruleMinReviews(): Int =
-        settings.getInt("cat_${currentCategory}_minReviews", -1).let { if (it >= 0) it else settings.getInt("minReviews", 0) }
+    private fun ruleMinReviews(): Int = settings.getInt("minReviews", 0)
     private var familyTried = false      // model bulunamayınca aynı serinin diğer yılları arandı mı   // kullanıcının seçtiği seri: bu seriyi yazmayan ilan "olası"   // seçilen seri: "Aktif Bebek" gibi
 
     /** Ürün sayfası okuyucu: garanti tipi ve satıcı. Siteye özel değil, sayfadaki yazılara bakar. */
@@ -3123,7 +3118,7 @@ class MainActivity : Activity() {
         // Kategori: dokununca o kategorinin kurallarını açar
         bar.addView(pill(currentCategory, ink, greyBg).apply {
             setPadding(dp(10), dp(4), dp(10), dp(4))
-            setOnClickListener { if (!running) { editCat = currentCategory; showSettings() } }
+            setOnClickListener { if (!running) showSettings() }
         })
         if (!running) bar.addView(label("Yeniden tanı", 13f, gold, true).apply {
             setPadding(dp(10), dp(4), 0, dp(4))
@@ -4119,47 +4114,25 @@ class MainActivity : Activity() {
 
         // Kurallar: genel ya da kategoriye özel
         val rules = gen
-        val cats = listOf("Genel") + categories
-        val ruleDefs = listOf(
-            Triple("hideAbroad", "Yurtdışı / ithal ilanları gizle", "International Version, menşei yurtdışı, TU/A olmayan cihazlar"),
-            Triple("hideImporter", "İthalatçı garantili ilanları gizle", "Ürün sayfası açılan pahalı ilanlarda geçerli"),
-            Triple("hideUsed", "Yenilenmiş / ikinci el / teşhir gizle", ""),
-            Triple("hideSuspicious", "Şüpheli ucuz ilanları gizle", "Gerçek fiyatın çok altındaki taklit ya da yanlış ilanlar"),
-        )
+        // Tek anahtar: şüpheli ucuz, ithalatçı garantili, yurtdışı ve ikinci el / yenilenmiş ilanlar
+        val trustKeys = listOf("hideAbroad", "hideImporter", "hideUsed", "hideSuspicious")
+        switchRow(rules, "Güvenilir olmayan ilanları gizle",
+            "Gerçek fiyatın çok altındaki şüpheli ilanlar, ithalatçı garantili ve yurtdışı ürünler, ikinci el ve yenilenmiş ilanlar gösterilmez",
+            trustKeys.all { flag(it) }) { v ->
+            settings.edit().apply { trustKeys.forEach { putBoolean(it, v) } }.apply()
+        }
         val ratings = listOf(0f, 3.5f, 4f, 4.5f)
         val ratingNames = listOf("Yok", "3,5", "4,0", "4,5")
         val counts = listOf(0, 10, 50, 100)
         val countNames = listOf("Yok", "10", "50", "100")
-        if (editCat == "Genel") {
-            ruleDefs.forEach { (k, t, sub) -> switchRow(rules, t, sub, flag(k)) { v -> settings.edit().putBoolean(k, v).apply() } }
-            choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
-                ratingNames, ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
-                settings.edit().putFloat("minRating", ratings[i]).apply()
-            }
-            choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
-                countNames, counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
-                settings.edit().putInt("minReviews", counts[i]).apply()
-            }
-        } else {
-            val cat = editCat
-            val tri = listOf("Genel ayar", "Açık", "Kapalı")
-            ruleDefs.forEach { (k, t, sub) ->
-                choiceRow(rules, t, (if (sub.isNotEmpty()) "$sub · " else "") + "genel: " + (if (flag(k)) "açık" else "kapalı"),
-                    tri, settings.getInt("cat_${cat}_$k", 0)) { i -> settings.edit().putInt("cat_${cat}_$k", i).apply() }
-            }
-            val rCur = settings.getFloat("cat_${cat}_minRating", -1f)
-            choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir",
-                listOf("Genel ayar") + ratingNames, if (rCur < 0) 0 else ratings.indexOf(rCur).coerceAtLeast(0) + 1) { i ->
-                settings.edit().putFloat("cat_${cat}_minRating", if (i == 0) -1f else ratings[i - 1]).apply()
-            }
-            val cCur = settings.getInt("cat_${cat}_minReviews", -1)
-            choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ilanlar gizlenir",
-                listOf("Genel ayar") + countNames, if (cCur < 0) 0 else counts.indexOf(cCur).coerceAtLeast(0) + 1) { i ->
-                settings.edit().putInt("cat_${cat}_minReviews", if (i == 0) -1 else counts[i - 1]).apply()
-            }
+        choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
+            ratingNames, ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
+            settings.edit().putFloat("minRating", ratings[i]).apply()
         }
-        choiceRow(rules, "Arama filtrelerinin uygulanacağı kategori", "Genel seçiliyse yukarıdaki filtreler bütün aramalarda geçerli; bir kategori seçersen o kategorinin aramalarına özel ayar yaparsın",
-            cats, cats.indexOf(editCat).coerceAtLeast(0)) { i -> editCat = cats[i] }
+        choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
+            countNames, counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
+            settings.edit().putInt("minReviews", counts[i]).apply()
+        }
 
 
 

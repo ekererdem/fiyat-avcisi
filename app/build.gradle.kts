@@ -37,4 +37,6 @@ android {
 dependencies {
     // Google'ın kamera barkod tarayıcısı (kamera izni gerektirmez, Play Hizmetleri üzerinden açılır)
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // Eşleştirme testleri (app/src/test)
+    testImplementation("junit:junit:4.13.2")
 }

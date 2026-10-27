@@ -555,6 +555,10 @@ class MainActivity : Activity() {
     private var filterText = ""
     private var sortMode = 0
     private val hiddenSites = HashSet<String>()
+    // Aramaya özel filtreler (hafıza, renk, beden...): ad -> seçili değerler
+    private val facetSel = LinkedHashMap<String, MutableSet<String>>()
+    private lateinit var facetRow: LinearLayout
+    private lateinit var facetScroll: HorizontalScrollView
     private val sortNames = listOf("Önerilen", "En ucuz", "En pahalı", "Tane / kg / L başı fiyat", "Puan", "Değerlendirme sayısı", "Kargo dahil en ucuz")
     private val refilter = Runnable { if (offers.isNotEmpty()) render(final = finished) }
 
@@ -1229,6 +1233,13 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { marginStart = dp(8) })
         filterBar.addView(fRow)
+        facetRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
+        facetScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(facetRow)
+        }
+        filterBar.addView(facetScroll)
         root.addView(filterBar)
 
         // Tarayıcı arkada tam boyutta durur, sonuç listesi üstünü kapatır
@@ -1819,6 +1830,7 @@ class MainActivity : Activity() {
         results.removeAllViews()
         expanded.clear()
         hiddenSites.clear()
+        facetSel.clear()
         filterText = ""
         filterInput.setText("")
         filterBar.visibility = View.GONE
@@ -3134,6 +3146,7 @@ class MainActivity : Activity() {
         // Filtre (site, kelime) sadece gösterimi etkiler; rapor ve hesaplar bütün ilanlarla yapılır
         filterBar.visibility = if (offers.isNotEmpty()) View.VISIBLE else View.GONE
         updateSiteToggles()
+        updateFacets()
         val fm = matches.filter { shown(it) }
         val fo = others.filter { shown(it) }
         if (fm.size < matches.size || fo.size < others.size) {
@@ -3216,6 +3229,69 @@ class MainActivity : Activity() {
         resultsScroll.post { resultsScroll.scrollTo(0, y) }
     }
 
+    /** İlanın özellikleri: başlıktan okunur (hafıza, RAM, renk, beden, miktar, seri) */
+    private fun facetsOf(o: Offer): Map<String, String> {
+        val t = o.title.lowercase(Locale("tr", "TR"))
+        val out = LinkedHashMap<String, String>()
+        // RAM: "8 GB RAM", "RAM 8 GB"
+        val ram = Regex("(\\d{1,2})\\s*gb\\s*(?:lpddr\\w*\\s*)?ram|ram\\s*:?\\s*(\\d{1,2})\\s*gb").find(t)
+        ram?.let { out["RAM"] = (it.groupValues[1].ifEmpty { it.groupValues[2] }) + " GB" }
+        // Hafıza: RAM olmayan en büyük GB/TB değeri
+        val store = Regex("(\\d{1,4})\\s*(gb|tb)\\b").findAll(t).filter { m ->
+            val after = t.substring(m.range.last + 1, minOf(t.length, m.range.last + 12))
+            !after.trimStart().startsWith("ram") && !Regex("^\\s*(lpddr|ddr)").containsMatchIn(after) &&
+                (ram == null || m.range.first != ram.range.first)
+        }.map { m -> val n = m.groupValues[1].toInt(); if (m.groupValues[2] == "tb") n * 1024 else n }
+            .filter { it >= 16 }.maxOrNull()
+        store?.let { out["Hafıza"] = if (it >= 1024 && it % 1024 == 0) "${it / 1024} TB" else "$it GB" }
+        colorsIn(o.title).singleOrNull()?.let { out["Renk"] = it.replaceFirstChar { c -> c.titlecase(Locale("tr", "TR")) } }
+        sizeNos(o.title).singleOrNull()?.let { out["Numara/Beden"] = it }
+        if (store == null) amountOf(o.title, queryAmount?.unit)?.let { if (!isSet(o)) out["Miktar"] = amountLabel(it) }
+        val tr = traitsOf(o.title)
+        out["Seri"] = if (tr.isEmpty()) "Standart" else tr.sorted().joinToString(" ")
+        return out
+    }
+
+    /** Sonuçlardaki ortak özelliklerden aramaya özel filtre çipleri: "Hafıza 256 GB", "Renk Siyah"… */
+    private fun updateFacets() {
+        if (!::facetRow.isInitialized) return
+        val pool = offers.filter { it.kind != Kind.OTHER && it.kind != Kind.ACCESSORY }
+        val counts = LinkedHashMap<String, LinkedHashMap<String, Int>>()
+        pool.forEach { o -> facetsOf(o).forEach { (k, v) -> counts.getOrPut(k) { LinkedHashMap() }.merge(v, 1, Int::plus) } }
+        fun numKey(v: String) = Regex("[0-9]+(?:[.,][0-9]+)?").find(v)?.value?.replace(",", ".")?.toDoubleOrNull()?.let {
+            if (v.contains("TB")) it * 1024 else it } ?: Double.MAX_VALUE
+        val order = listOf("Seri", "Hafıza", "RAM", "Renk", "Numara/Beden", "Miktar")
+        val chips = mutableListOf<Pair<String, String>>()
+        for (k in order) {
+            val m = counts[k] ?: continue
+            val covered = m.values.sum()
+            // Seri sadece en az iki farklı seri ve "Standart" dışında bir seri varsa anlamlı
+            if (m.size < 2 || covered < 3) continue
+            if (k == "Seri" && m.keys.all { it == "Standart" }) continue
+            m.keys.sortedWith(compareBy({ numKey(it) }, { it })).take(8).forEach { chips.add(k to it) }
+        }
+        // Seçili ama artık listede olmayan değerler de görünsün (kaldırabilmek için)
+        facetSel.forEach { (k, set) -> set.forEach { v -> if (chips.none { it.first == k && it.second == v }) chips.add(0, k to v) } }
+        facetRow.removeAllViews()
+        facetScroll.visibility = if (chips.isEmpty()) View.GONE else View.VISIBLE
+        for ((k, v) in chips) {
+            val on = facetSel[k]?.contains(v) == true
+            facetRow.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = if (on) rounded(gold, 18) else rounded(surface, 18, line)
+                setPadding(dp(14), dp(6), dp(14), dp(7))
+                addView(label(k, 11f, if (on) accentOn else muted))
+                addView(label(v, 14f, if (on) accentOn else ink, true))
+                setOnClickListener {
+                    val set = facetSel.getOrPut(k) { mutableSetOf() }
+                    if (!set.add(v)) set.remove(v)
+                    if (set.isEmpty()) facetSel.remove(k)
+                    render(final = finished)
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+        }
+    }
+
     /** Filtreye uyuyor mu: site gizli değil ve yazılan kelimelerin hepsi adda/satıcıda geçiyor */
     private fun shown(o: Offer): Boolean {
         if (o.site in hiddenSites) return false
@@ -3228,6 +3304,11 @@ class MainActivity : Activity() {
         if (minR > 0 && ratingNum(o) > 0 && ratingNum(o) < minR) return false
         val minC = ruleMinReviews()
         if (minC > 0 && countNum(o.ratingCount) < minC) return false
+        for ((name, sel) in facetSel) {
+            if (sel.isEmpty()) continue
+            val v = facetsOf(o)[name] ?: return false
+            if (v !in sel) return false
+        }
         val words = filterText.trim().split(Regex("\\s+")).map { norm(it) }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return true
         val nt = canonNorm(o.title + " " + o.seller + " " + o.site)

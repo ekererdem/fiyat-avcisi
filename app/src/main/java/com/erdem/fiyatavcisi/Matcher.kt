@@ -382,7 +382,19 @@ fun sizeNos(title: String): Set<String> {
 /** Aranan kelime başlıkta var mı (numara/beden yazım farklarıyla birlikte) */
 fun hasWord(title: String, nt: String, w: String): Boolean {
     Regex("^no([0-9]{1,2})$").find(w)?.let { m -> return m.groupValues[1].trimStart('0') in sizeNos(title) || nt.contains(w) }
-    return nt.contains(w)
+    if (nt.contains(w)) return true
+    // "care6" gibi kelime+sayı: ilanda sayı başka yerde yazabilir ("Premium Care Aylık Paket 6 Numara").
+    // Kelime ve sayı ayrı ayrı geçiyorsa kabul; sayı bir ölçü ("16 GB", "6 ml", "6.1 inç") ya da başka sayının parçası olmamalı.
+    Regex("^([a-z]{2,})([0-9]{1,2})$").find(w)?.let { m ->
+        val word = m.groupValues[1]
+        val n = m.groupValues[2]
+        if (!nt.contains(word)) return false
+        val t = title.lowercase(Locale("tr", "TR"))
+        val unit = "(?:gb|tb|mb|mah|ml|cl|gr|g|kg|lt|l|litre|adet|cm|mm|m|inç|inch|in|w|watt|hz|mp|v|volt|x|li|lı|lu|lü|'li|'lı|'lu|'lü|parça)(?![\\p{L}])"
+        val re = Regex("(?<![0-9.,x×/])0*" + n + "(?![0-9]|[.,][0-9])(?!\\s*" + unit + ")")
+        return re.containsMatchIn(t)
+    }
+    return false
 }
 
 /** Aramadaki zorunlu kelimeler (tür kelimeleri + şart olan ölçüler) */

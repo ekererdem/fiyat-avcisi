@@ -3522,17 +3522,17 @@ class MainActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             if (o.image.isNotEmpty()) loadImage(o.image, this, Uri.parse(o.link).let { u -> "${u.scheme}://${u.host}/" })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
+        brandOf(o.brandHint.ifEmpty { o.title }).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(16), 0, 0) }) }
+        col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
         // Site · puan
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, dp(4))
+            setPadding(0, 0, 0, dp(6))
             addView(pill(o.site, Color.WHITE, siteColors[o.site] ?: ink, bold = true, size = 12f))
             if (o.rating.isNotEmpty()) addView(label("★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "", 13f, muted)
                 .apply { setPadding(dp(10), 0, 0, 0) })
         })
-        brandOf(o.brandHint.ifEmpty { o.title }).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(6), 0, 0) }) }
-        col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
         // Fiyat
         val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
         priceRow.addView(label(money(o.price), 30f, if (o.kind == Kind.MATCH) green else ink, true))
@@ -3675,27 +3675,20 @@ class MainActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
+        brandOf(a.title).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(16), 0, 0) }) }
+        col.addView(label(a.title, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
+        // Site, fiyatın hemen üstünde
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, dp(4))
+            setPadding(0, 0, 0, dp(6))
             addView(pill(a.site, Color.WHITE, siteColors[a.site] ?: ink, bold = true, size = 12f))
-            addView(label(if (a.watch) "Takipte · bildirim yok" else "Alarm açık", 13f, if (a.watch) muted else gold, true)
-                .apply { setPadding(dp(10), 0, 0, 0) })
         })
-        brandOf(a.title).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(6), 0, 0) }) }
-        col.addView(label(a.title, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
         col.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 30f,
             if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
-        val info = mutableListOf<String>()
-        a.unitPrice()?.let { info.add(Alarms.unitText(it, a.unitName)) }
-        if (a.startPrice > 0) info.add("başta ${money(a.startPrice)}")
-        if (a.lowest > 0 && a.lowest < a.startPrice) info.add("en düşük ${money(a.lowest)}")
-        when (a.inStock) { true -> info.add("stokta"); false -> info.add("stokta yok"); else -> {} }
-        col.addView(label(info.joinToString(" · "), 13f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        a.unitPrice()?.let { col.addView(label(Alarms.unitText(it, a.unitName), 13f, muted).apply { setPadding(0, dp(4), 0, 0) }) }
         val t = if (a.unitTarget > 0) Alarms.unitText(a.unitTarget, a.unitName) else if (a.target > 0) money(a.target) else null
         if (!a.watch) col.addView(label(if (t != null) "Hedef: $t" else "Hedef: her ucuzlamada haber ver", 13f, ink, true).apply { setPadding(0, dp(6), 0, 0) })
-        if (a.lastCheck > 0) col.addView(label("Son kontrol ${java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR")).format(java.util.Date(a.lastCheck))} · ${a.status}", 12f, muted)
+        if (a.lastCheck > 0) col.addView(label("Son kontrol ${java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR")).format(java.util.Date(a.lastCheck))}", 12f, muted)
             .apply { setPadding(0, dp(4), 0, 0) })
 
         // İşlemler

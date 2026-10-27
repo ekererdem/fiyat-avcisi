@@ -36,7 +36,8 @@ jobs:
           f=app/build/match-report.txt
           if [ -f "$f" ]; then
             head -1 "$f" | while IFS= read -r l; do echo "::notice::$l"; done
-            tail -n +2 "$f" | head -60 | while IFS= read -r l; do echo "::error::$l"; done
+            tail -n +2 "$f" | head -60 | while IFS= read -r l; do echo "::warning title=Eşleştirme::$l"; done
+            cat "$f"
           fi
 
       - name: Derle

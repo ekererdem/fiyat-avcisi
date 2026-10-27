@@ -4059,7 +4059,7 @@ class MainActivity : Activity() {
             thumbTintList = android.content.res.ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(gold, if (dark) c("#5A5A5A") else c("#D6D3D1")))
             trackTintList = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(if (dark) c("#1F5A3C") else c("#A7D7B8"), if (dark) c("#333333") else c("#E7E5E4")))
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(if (dark) c("#6B5A1E") else c("#F5DFA0"), if (dark) c("#2F3E4E") else c("#E7E5E4")))
             setOnCheckedChangeListener { _, v -> onChange(v) }
         })
     }
@@ -4101,45 +4101,39 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), 0)
         }
-        head.addView(label("Ayarlar", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("Ayarlar", 22f, ink, true))
+            addView(label("İzci'yi kendi alışveriş alışkanlığına göre ayarla", 13f, muted).apply { setPadding(0, dp(2), 0, 0) })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         results.addView(head)
 
-        // Genel ayarlar: tema ve takip/alarm kontrol sıklığı
-        val gen = settingsCard("Genel ayarlar")
-        choiceRow(gen, "Tema", "Koyu tema gece göz yormaz", listOf("Telefona göre", "Açık", "Koyu"),
-            settings.getInt("theme", 0)) { i ->
-            settings.edit().putInt("theme", i).apply()
-            handler.post { recreate() }
-        }
-
-        // Kurallar: genel ya da kategoriye özel
-        val rules = gen
-        // Tek anahtar: şüpheli ucuz, ithalatçı garantili, yurtdışı ve ikinci el / yenilenmiş ilanlar
+        // Arama sonuçları
+        val res = settingsCard("Arama sonuçları")
         val trustKeys = listOf("hideAbroad", "hideImporter", "hideUsed", "hideSuspicious")
-        switchRow(rules, "Güvenilir olmayan ilanları gizle",
-            "Gerçek fiyatın çok altındaki şüpheli ilanlar, ithalatçı garantili ve yurtdışı ürünler, ikinci el ve yenilenmiş ilanlar gösterilmez",
+        switchRow(res, "Yalnızca güvenilir ilanları göster",
+            "Şüpheli derecede ucuz, ithalatçı garantili, yurt dışı, ikinci el ve yenilenmiş ilanları sonuçlardan çıkarır",
             trustKeys.all { flag(it) }) { v ->
             settings.edit().apply { trustKeys.forEach { putBoolean(it, v) } }.apply()
         }
         val ratings = listOf(0f, 3.5f, 4f, 4.5f)
-        val ratingNames = listOf("Yok", "3,5", "4,0", "4,5")
+        val ratingNames = listOf("Fark etmez", "3,5 ve üzeri", "4,0 ve üzeri", "4,5 ve üzeri")
         val counts = listOf(0, 10, 50, 100)
-        val countNames = listOf("Yok", "10", "50", "100")
-        choiceRow(rules, "En az ürün puanı", "Puanı bunun altındaki ilanlar gizlenir (puansızlar kalır)",
+        val countNames = listOf("Fark etmez", "10 ve üzeri", "50 ve üzeri", "100 ve üzeri")
+        choiceRow(res, "En düşük ürün puanı", "Bu puanın altındaki ilanlar listelenmez; henüz puanı olmayan ürünler görünmeye devam eder",
             ratingNames, ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
             settings.edit().putFloat("minRating", ratings[i]).apply()
         }
-        choiceRow(rules, "En az değerlendirme sayısı", "Az değerlendirilen ya da hiç değerlendirilmemiş ilanlar gizlenir",
+        choiceRow(res, "En az değerlendirme", "Yeterince değerlendirilmemiş ilanları gizleyerek daha bilinen satıcıları öne çıkarır",
             countNames, counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
             settings.edit().putInt("minReviews", counts[i]).apply()
         }
 
-
-
-        // Siteler: dokunarak aç/kapat, yan yana küçük çipler
-        val src = settingsCard("Taranan siteler")
-        src.addView(label("Dokunarak aç ya da kapat. Siteler aramanın kategorisine göre ayrıca seçilir.", 12f, muted).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
-        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(6)) }
+        // Mağazalar
+        val src = settingsCard("Mağazalar")
+        src.addView(label("Fiyatlarını karşılaştırmak istediğin mağazaları seç. İzci, aradığın ürünün türüne uygun mağazaları ayrıca kendisi belirler.",
+            13f, muted).apply { setPadding(dp(2), dp(10), dp(2), dp(10)) })
+        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(12)) }
         sites.forEach { site ->
             val chip = TextView(this).apply { textSize = 13f; setPadding(dp(12), dp(8), dp(12), dp(8)) }
             fun paint() {
@@ -4158,12 +4152,19 @@ class MainActivity : Activity() {
         }
         src.addView(siteFlow)
 
+        // Görünüm
+        val look = settingsCard("Görünüm")
+        choiceRow(look, "Tema", "Uygulamanın açık ya da koyu renkte görünmesi", listOf("Telefonla aynı", "Açık", "Koyu"),
+            settings.getInt("theme", 0)) { i ->
+            settings.edit().putInt("theme", i).apply()
+            handler.post { recreate() }
+        }
 
-        // İzinler
-        val perm = settingsCard("İzinler")
+        // Bildirimler ve arka plan
+        val perm = settingsCard("Bildirimler ve arka plan")
         val nm = getSystemService(android.app.NotificationManager::class.java)
         val notifOk = nm?.areNotificationsEnabled() == true
-        actionRow(perm, "Bildirimler", notifOk, "Fiyat düşünce haber vermek için", if (notifOk) "Ayarlar" else "İzin ver") {
+        actionRow(perm, "Bildirimler", notifOk, "Fiyat düştüğünde ya da ürün stoğa girdiğinde haber al", if (notifOk) "Yönet" else "Aç") {
             if (!notifOk && android.os.Build.VERSION.SDK_INT >= 33 && !settings.getBoolean("notifAsked", false)) {
                 settings.edit().putBoolean("notifAsked", true).apply()
                 askNotificationPermission()
@@ -4174,25 +4175,28 @@ class MainActivity : Activity() {
         }
         val pm = getSystemService(android.os.PowerManager::class.java)
         val batteryOk = pm?.isIgnoringBatteryOptimizations(packageName) == true
-        actionRow(perm, "Pil kısıtlaması yok", batteryOk, "Alarmların arka planda çalışması için", if (batteryOk) "Ayarlar" else "Kaldır") {
+        actionRow(perm, "Arka planda çalışma", batteryOk, "Uygulama kapalıyken de fiyatların kontrol edilmesi için gerekir", if (batteryOk) "Yönet" else "İzin ver") {
             if (!batteryOk) openIntent(
                 Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
                 Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails())
             else openIntent(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails())
         }
-        actionRow(perm, "Otomatik başlatma (Xiaomi)", null, "Telefon açılınca alarmlar sürsün diye açık olmalı; durumu okunamıyor", "Aç") {
-            openIntent(
-                Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")),
-                Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
-                appDetails())
-        }
-        actionRow(perm, "Uygulama ayarları", null, "Android'in bu uygulama için bütün ayarları", "Aç") { openIntent(appDetails()) }
+        if (android.os.Build.MANUFACTURER.lowercase(Locale.ROOT).let { it.contains("xiaomi") || it.contains("redmi") || it.contains("poco") })
+            actionRow(perm, "Otomatik başlatma", null, "Telefon yeniden açıldığında takibin kesintisiz sürmesini sağlar", "Aç") {
+                openIntent(
+                    Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")),
+                    Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
+                    appDetails())
+            }
+        actionRow(perm, "Diğer izinler", null, "Tüm uygulama izinlerini telefonun ayarlarından yönet", "Aç") { openIntent(appDetails()) }
 
-        // Siteler
-
-        results.addView(label("İzci · ${Update.currentName(this)}", 12f, muted).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(20), 0, dp(10))
+        results.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(26), 0, dp(12))
+            addView(label("İzci", 14f, ink, true))
+            addView(label("En uygun fiyatı senin için bulur, izler, haber verir", 12f, muted).apply { setPadding(0, dp(2), 0, 0) })
+            addView(label("Sürüm ${Update.currentName(this@MainActivity)}", 11f, muted).apply { setPadding(0, dp(4), 0, 0) })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         resultsScroll.post { resultsScroll.scrollTo(0, keepY) }
     }

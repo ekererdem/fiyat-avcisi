@@ -4394,7 +4394,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
         }
-        head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${productCount(list)})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + if (list.isNotEmpty()) " · ${productCount(list)}" else "", 20f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sayfa açılınca fiyatlar 2 saatten eskiyse arka planda sessizce yenilenir
         val newest = list.maxOfOrNull { it.lastCheck } ?: 0L
         if (list.isNotEmpty() && !autoChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) {
@@ -4408,11 +4408,39 @@ class MainActivity : Activity() {
             }.start()
         }
         results.addView(head)
+        // Kısa tanıtım satırı
+        results.addView(label(if (watchMode)
+            "Fiyatını merak ettiğin ürünler burada. İzci fiyatları ve geçmişi senin için düzenli kaydeder; bildirim göndermez."
+        else
+            "Beklediğin fiyata inen ya da yeniden stoğa giren ürünlerden anında haberin olur.", 13f, muted)
+            .apply { setPadding(dp(4), 0, dp(4), dp(10)) })
         if (list.isEmpty()) {
-            noticeCard(if (watchMode) "Takip listen boş. Arama sonuçlarında bir ilanın zil düğmesine dokun ve " +
-                "“Sadece takip et”i işaretle: fiyatı ve geçmişi tutulur, bildirim gelmez." else
-                "Henüz alarm yok. Arama sonuçlarında bir ilanın zil düğmesine dokun ya da Trendyol, Hepsiburada gibi " +
-                "uygulamalarda bir ürünü Paylaş → İzci ile gönder.", ink, amberBg)
+            results.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = rounded(surface, 20, line)
+                setPadding(dp(20), dp(28), dp(20), dp(24))
+                addView(FrameLayout(this@MainActivity).apply {
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greenBg) }
+                    addView(ImageView(this@MainActivity).apply {
+                        setImageResource(if (watchMode) R.drawable.ic_watch else R.drawable.ic_bell)
+                        imageTintList = android.content.res.ColorStateList.valueOf(gold)
+                    }, FrameLayout.LayoutParams(dp(28), dp(28)).apply { gravity = Gravity.CENTER })
+                }, LinearLayout.LayoutParams(dp(64), dp(64)))
+                addView(label(if (watchMode) "Takip listen henüz boş" else "Henüz alarm kurmadın", 17f, ink, true)
+                    .apply { gravity = Gravity.CENTER; setPadding(0, dp(14), 0, dp(6)) })
+                addView(label(if (watchMode)
+                    "Bir ürünü aradıktan sonra ürün sayfasında “Takip et”e dokun. Fiyatını ve fiyat geçmişini buradan izlersin."
+                else
+                    "Bir ürünün sayfasında “Alarm kur”a dokun, hedef fiyatını belirle, gerisini İzci'ye bırak. " +
+                        "Trendyol, Hepsiburada gibi uygulamalarda Paylaş → İzci ile de ürün ekleyebilirsin.", 13f, muted)
+                    .apply { gravity = Gravity.CENTER; setLineSpacing(dp(2).toFloat(), 1f) })
+                addView(label("Ürün ara", 14f, accentOn, true).apply {
+                    background = rounded(gold, 22)
+                    setPadding(dp(22), dp(11), dp(22), dp(11))
+                    setOnClickListener { goHome() }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
             return
         }
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))

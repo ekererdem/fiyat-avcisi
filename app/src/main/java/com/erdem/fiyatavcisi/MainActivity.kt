@@ -3531,6 +3531,7 @@ class MainActivity : Activity() {
             if (o.rating.isNotEmpty()) addView(label("★ ${o.rating}" + if (o.ratingCount.isNotEmpty()) " (${countText(o.ratingCount)})" else "", 13f, muted)
                 .apply { setPadding(dp(10), 0, 0, 0) })
         })
+        brandOf(o.brandHint.ifEmpty { o.title }).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(6), 0, 0) }) }
         col.addView(label(o.title.ifEmpty { "(ad okunamadı)" }, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
         // Fiyat
         val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
@@ -3632,6 +3633,11 @@ class MainActivity : Activity() {
         resultsScroll.post { resultsScroll.scrollTo(0, 0) }
     }
 
+    /** Marka: başlığın ilk kelimesi, büyük harfle ("METONTECH") */
+    private fun brandOf(title: String): String =
+        title.trim().split(Regex("\\s+")).firstOrNull()?.trim('|', ',', '-', '(', ')', '"')?.takeIf { w -> w.any { it.isLetter() } }
+            ?.uppercase(Locale("tr", "TR")).orEmpty()
+
     private var resultsScrollY = 0
 
     private fun backToResults() {
@@ -3677,7 +3683,7 @@ class MainActivity : Activity() {
             addView(label(if (a.watch) "Takipte · bildirim yok" else "Alarm açık", 13f, if (a.watch) muted else gold, true)
                 .apply { setPadding(dp(10), 0, 0, 0) })
         })
-        if (gid != 0L && a.groupName.isNotEmpty()) col.addView(label(a.groupName, 13f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        brandOf(a.title).takeIf { it.isNotEmpty() }?.let { col.addView(label(it, 13f, muted, true).apply { letterSpacing = 0.08f; setPadding(0, dp(6), 0, 0) }) }
         col.addView(label(a.title, 17f, ink, true).apply { setPadding(0, dp(4), 0, dp(10)) })
         col.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 30f,
             if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))

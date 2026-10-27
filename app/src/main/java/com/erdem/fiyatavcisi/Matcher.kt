@@ -389,9 +389,13 @@ fun hasWord(title: String, nt: String, w: String): Boolean {
         val word = m.groupValues[1]
         val n = m.groupValues[2]
         if (!nt.contains(word)) return false
+        // İlanda açıkça başka bir beden/numara yazıyorsa ("Beden:3", "3 Numara") bu sayı o değildir
+        val sz = sizeNos(title)
+        if (sz.isNotEmpty() && n.trimStart('0') !in sz) return false
         val t = title.lowercase(Locale("tr", "TR"))
         val unit = "(?:gb|tb|mb|mah|ml|cl|gr|g|kg|lt|l|litre|adet|cm|mm|m|inç|inch|in|w|watt|hz|mp|v|volt|x|li|lı|lu|lü|'li|'lı|'lu|'lü|parça)(?![\\p{L}])"
-        val re = Regex("(?<![0-9.,x×/])0*" + n + "(?![0-9]|[.,][0-9])(?!\\s*" + unit + ")")
+        // Aralıkların parçası da değildir: "6-10 kg", "13-18 kg"
+        val re = Regex("(?<![0-9.,x×/])(?<![0-9]\\s{0,2}[-–]\\s{0,2})0*" + n + "(?![0-9]|[.,][0-9])(?!\\s*[-–]\\s*[0-9])(?!\\s*" + unit + ")")
         return re.containsMatchIn(t)
     }
     return false

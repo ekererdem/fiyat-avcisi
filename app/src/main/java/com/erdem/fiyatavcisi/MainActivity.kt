@@ -3688,8 +3688,6 @@ class MainActivity : Activity() {
         a.unitPrice()?.let { col.addView(label(Alarms.unitText(it, a.unitName), 13f, muted).apply { setPadding(0, dp(4), 0, 0) }) }
         val t = if (a.unitTarget > 0) Alarms.unitText(a.unitTarget, a.unitName) else if (a.target > 0) money(a.target) else null
         if (!a.watch) col.addView(label(if (t != null) "Hedef: $t" else "Hedef: her ucuzlamada haber ver", 13f, ink, true).apply { setPadding(0, dp(6), 0, 0) })
-        if (a.lastCheck > 0) col.addView(label("Son kontrol ${java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR")).format(java.util.Date(a.lastCheck))}", 12f, muted)
-            .apply { setPadding(0, dp(4), 0, 0) })
 
         // İşlemler
         val acts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(16), 0, 0) }

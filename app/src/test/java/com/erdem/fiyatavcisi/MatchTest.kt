@@ -70,6 +70,12 @@ class MatchTest {
             "iPhone 16 Uyumlu Şeffaf Silikon Kılıf" to setOf(Kind.ACCESSORY),
             "Apple iPhone 15 128GB Siyah" to notSame,
         )),
+        // --- Kelime+sayı: sayı bir ölçünün parçasıysa ("6.1 inç", "16 GB") model numarası sayılmaz
+        Case("iphone 6", listOf(
+            "Apple iPhone 6 32 GB Uzay Grisi" to same,
+            "Apple iPhone 15 6.1 inç 128 GB Siyah" to notSame,
+            "Apple iPhone 13 128GB 6 GB RAM" to notSame,
+        )),
         // --- Kahve: farklı gramaj ayrı paket; Crema / kafeinsiz farklı ürün
         Case("nescafe gold 200 gr", listOf(
             "Nescafe Gold 200 gr" to same,

@@ -816,6 +816,11 @@ class MainActivity : Activity() {
         // Pencereler (diyalog, menü) de temaya uysun
         setTheme(if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(savedInstanceState)
+        // Kontrol sıklığı artık sabit (3 saat): eski ayarla kurulmuş işi bir kez yeniden kur
+        if (!settings.getBoolean("sched_fixed3", false)) {
+            try { Alarms.schedule(this, Alarms.load(this).isNotEmpty(), force = true) } catch (e: Exception) {}
+            settings.edit().putBoolean("sched_fixed3", true).apply()
+        }
         // Uygulama çökerse hatanın ayrıntısını sakla; bir sonraki açılışta göster (teşhis için)
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -4030,9 +4035,6 @@ class MainActivity : Activity() {
             settings.edit().putInt("theme", i).apply()
             handler.post { recreate() }
         }
-        val hours = listOf(1, 2, 4, 6, 12)
-        choiceRow(gen, "Fiyat kontrol sıklığı", "Takip ve alarmdaki ürünler bu aralıkla kontrol edilir; sık kontrol biraz daha pil harcar",
-            hours.map { "$it saatte bir" }, hours.indexOf(Alarms.hours(this)).coerceAtLeast(0)) { i -> Alarms.setHours(this, hours[i]) }
 
         // Kurallar: genel ya da kategoriye özel
         val rules = gen
@@ -4371,6 +4373,8 @@ class MainActivity : Activity() {
     }
 
     /** Alarmlarım ekranı */
+    @Volatile private var autoChecking = false
+
     /** "alarms": bildirimli alarmlar · "watch": sadece takip (bildirim yok) */
     private var alarmView = "alarms"
 
@@ -4391,23 +4395,18 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), dp(8))
         }
         head.addView(label((if (watchMode) "Takip listem" else "Alarmlarım") + " (${productCount(list)})", 18f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (list.isNotEmpty()) head.addView(label("Şimdi kontrol et", 13f, accentOn, true).apply {
-            background = rounded(gold, 12)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setOnClickListener {
-                status.text = "Kontrol ediliyor…"
-                status.visibility = View.VISIBLE
-                progress.visibility = View.VISIBLE
-                Thread {
-                    val n = try { Alarms.checkAll(applicationContext) } catch (e: Exception) { 0 }
-                    handler.post {
-                        progress.visibility = View.GONE
-                        Toast.makeText(this@MainActivity, if (n > 0) "$n bildirim gönderildi" else "Değişiklik yok", Toast.LENGTH_SHORT).show()
-                        showAlarms()
-                    }
-                }.start()
-            }
-        })
+        // Sayfa açılınca fiyatlar 2 saatten eskiyse arka planda sessizce yenilenir
+        val newest = list.maxOfOrNull { it.lastCheck } ?: 0L
+        if (list.isNotEmpty() && !autoChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) {
+            autoChecking = true
+            Thread {
+                try { Alarms.checkAll(applicationContext) } catch (e: Exception) {}
+                handler.post {
+                    autoChecking = false
+                    if (screen == mode && !running) showAlarms(mode)
+                }
+            }.start()
+        }
         results.addView(head)
         if (list.isEmpty()) {
             noticeCard(if (watchMode) "Takip listen boş. Arama sonuçlarında bir ilanın zil düğmesine dokun ve " +

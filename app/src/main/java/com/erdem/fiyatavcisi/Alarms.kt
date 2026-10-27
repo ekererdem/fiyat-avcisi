@@ -53,7 +53,8 @@ object Alarms {
     private const val CHANNEL = "alarms"
     private const val JOB_ID = 4242
     /** Kontrol sıklığı (saat), ayarlardan seçilir */
-    fun hours(ctx: Context) = prefs(ctx).getInt("hours", 2)
+    // Sabit 3 saat: günde 8 kontrol; fiyat değişimini kaçırmaz, pili ve siteleri yormaz
+    fun hours(ctx: Context) = 3
     fun setHours(ctx: Context, h: Int) {
         prefs(ctx).edit().putInt("hours", h).apply()
         schedule(ctx, load(ctx).isNotEmpty(), force = true)

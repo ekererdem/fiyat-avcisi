@@ -284,10 +284,11 @@ class MainActivity : Activity() {
             .lowercase(Locale("tr", "TR"))
         fun has(re: String) = Regex(re).containsMatchIn(t)
         return when {
-            has("bebek bezi|bebek bez|külot bez|prima|molfix|sleepy|biberon|emzik|bebek maması|ıslak havlu|ıslak mendil") -> "Bebek"
+            has("bebek bezi|bebek bez|külot bez|prima|pampers|huggies|molfix|sleepy|evy baby|canbebe|biberon|emzik|bebek maması|ıslak havlu|ıslak mendil") -> "Bebek"
             has("parfüm|parfum|\\bedt\\b|\\bedp\\b|deodorant|şampuan|krem|ruj|maskara|serum|losyon|tıraş köpüğü|saç boyası|cilt") -> "Kozmetik"
-            has("ayakkabı|sneaker|tişört|t-shirt|gömlek|pantolon|elbise|ceket|mont|eşofman|çanta|terlik|bot\\b|sweatshirt|beden") -> "Giyim"
-            has("telefon|iphone|galaxy|televizyon|\\btv\\b|qled|oled|laptop|bilgisayar|tablet|ipad|kulaklık|airpods|monitör|kamera|" +
+            has("ayakkabı|sneaker|tişört|t-shirt|gömlek|pantolon|elbise|ceket|mont|eşofman|çanta|terlik|bot\\b|sweatshirt|beden|" +
+                "\\bnike\\b|adidas|puma|new balance|converse|\\bvans\\b|skechers|air force|air max|jordan") -> "Giyim"
+            has("telefon|iphone|galaxy|xiaomi|redmi|huawei|macbook|airpods|playstation|televizyon|\\btv\\b|qled|oled|laptop|bilgisayar|tablet|ipad|kulaklık|airpods|monitör|kamera|" +
                 "playstation|ps5|xbox|akıllı saat|şarj|tıraş makinesi|süpürge|buzdolabı|çamaşır makinesi|bulaşık makinesi|klima|fırın|" +
                 "kahve makinesi|oneblade|ekran kartı|ssd|router|modem|yazıcı|akü|powerbank|\\d\\s*mah\\b|jump starter|kompresör|hoparlör|projeksiyon|drone|robot süpürge") -> "Elektronik"
             has("\\d+\\s*(gr|g|kg|ml|lt|l)\\b|kahve|çay|deterjan|yumuşatıcı|makarna|yağ|şeker|un\\b|süt|peynir|çikolata|bisküvi|kağıt havlu|tuvalet kağıdı|su\\b") -> "Market"
@@ -2133,7 +2134,7 @@ class MainActivity : Activity() {
         "eau" to "Eau", "elixir" to "Elixir", "extreme" to "Extreme", "intense" to "Intense", "absolu" to "Absolu", "forte" to "Forte",
         "aktif" to "Aktif Bebek", "premium" to "Premium", "kulot" to "Külot", "pants" to "Külot", "harmonie" to "Harmonie",
         "stick" to "Stick", "kavanoz" to "Kavanoz", "cam" to "Kavanoz",
-        "ps" to "Çocuk", "gs" to "Çocuk", "td" to "Çocuk", "cocuk" to "Çocuk", "kids" to "Çocuk",
+        "ps" to "Çocuk", "gs" to "Çocuk", "td" to "Çocuk", "cocuk" to "Çocuk", "kids" to "Çocuk", "junior" to "Çocuk",
         "plt" to "Platform", "jewel" to "Jewel", "lx" to "LX", "se" to "SE", "flyease" to "Flyease", "retro" to "Retro",
         "nature" to "Next Nature", "nn" to "Next Nature", "fontanka" to "Fontanka",
         // Aynı isimli başka ürün türleri (parfüm ararken tıraş sonrası losyon vb.)
@@ -2157,7 +2158,48 @@ class MainActivity : Activity() {
         "altin" to "altın", "rose" to "pembe",
     )
 
-    private fun traitsOf(s: String): Set<String> = tokensOf(s).mapNotNull { modMap[norm(it)] }.toSet()
+    /**
+     * Ayırt edici kelimeler kategoriye bağlıdır: "Junior" ayakkabıda çocuk modeli, bebek bezinde sadece beden adıdır;
+     * "Pro/Max" elektronikte farklı model, "Külot" bezde farklı üründür. Listede olmayan kelime her kategoride geçerlidir.
+     * Kategori bilinmiyorsa (Diğer) hepsi geçerlidir.
+     */
+    private val tech = setOf("Elektronik", "Giyim")
+    private val modCats: Map<String, Set<String>> = mapOf(
+        // Elektronik ve ayakkabı/giyim modelleri
+        "pro" to tech, "plus" to tech, "max" to tech, "mini" to tech, "ultra" to tech, "lite" to tech,
+        "fe" to setOf("Elektronik"), "se" to setOf("Elektronik"),
+        // Ayakkabı / giyim
+        "mid" to setOf("Giyim"), "high" to setOf("Giyim"), "shadow" to setOf("Giyim"), "sculpt" to setOf("Giyim"),
+        "lv8" to setOf("Giyim"), "craft" to setOf("Giyim"), "utility" to setOf("Giyim"), "react" to setOf("Giyim"),
+        "platform" to setOf("Giyim"), "plt" to setOf("Giyim"), "jewel" to setOf("Giyim"), "lx" to setOf("Giyim"),
+        "flyease" to setOf("Giyim"), "retro" to setOf("Giyim"), "nature" to setOf("Giyim"), "nn" to setOf("Giyim"),
+        "ps" to setOf("Giyim"), "gs" to setOf("Giyim"), "td" to setOf("Giyim"), "le" to setOf("Giyim"),
+        "cocuk" to setOf("Giyim"), "kids" to setOf("Giyim"), "junior" to setOf("Giyim"),
+        // Kozmetik / parfüm
+        "eau" to setOf("Kozmetik"), "elixir" to setOf("Kozmetik"), "extreme" to setOf("Kozmetik"), "intense" to setOf("Kozmetik"),
+        "absolu" to setOf("Kozmetik"), "forte" to setOf("Kozmetik"), "after" to setOf("Kozmetik"), "aftershave" to setOf("Kozmetik"),
+        "balm" to setOf("Kozmetik"), "losyon" to setOf("Kozmetik"), "deodorant" to setOf("Kozmetik"), "deo" to setOf("Kozmetik"),
+        "jeli" to setOf("Kozmetik"), "sampuan" to setOf("Kozmetik"), "stick" to setOf("Kozmetik", "Market"),
+        // Bebek
+        "aktif" to setOf("Bebek"), "premium" to setOf("Bebek"), "kulot" to setOf("Bebek"), "pants" to setOf("Bebek"),
+        "harmonie" to setOf("Bebek"), "havlu" to setOf("Bebek", "Market"), "mendil" to setOf("Bebek", "Market"),
+        // Market (kahve vb.)
+        "crema" to setOf("Market"), "filtre" to setOf("Market"), "kafeinsiz" to setOf("Market"), "decaf" to setOf("Market"),
+        "aromali" to setOf("Market"), "karamel" to setOf("Market"), "vanilya" to setOf("Market"), "findik" to setOf("Market"),
+        "roastery" to setOf("Market"), "icimlik" to setOf("Market"), "kavanoz" to setOf("Market"), "cam" to setOf("Market"),
+        "fontanka" to setOf("Market"),
+    )
+    /** Eşleştirmede kullanılan kategori; her sınıflandırmanın başında belirlenir */
+    private var traitCat = "Diğer"
+
+    private fun traitsOf(s: String): Set<String> = tokensOf(s).mapNotNull { w ->
+        val k = norm(w)
+        val v = modMap[k] ?: return@mapNotNull null
+        val cs = modCats[k]
+        // "Junior" gibi beden adı olabilecek kelimeler kategori bilinmezken ayırt edici sayılmaz
+        if (traitCat == "Diğer") { if (k == "junior") null else v }
+        else if (cs == null || traitCat in cs) v else null
+    }.toSet()
 
     /** Aramadaki model numarasına harf eklenmiş hali: "16" ararken "16e", "16s" başka modeldir */
     private fun suffixTraits(q: String, title: String): Set<String> {
@@ -2658,6 +2700,7 @@ class MainActivity : Activity() {
         .replace("atac", "atas").replace(Regex("[^a-z0-9]"), "")
 
     private fun classify() {
+        traitCat = detectCategory()
         queryAmount = amountOf(identity?.searchQuery ?: query)
         val id = identity
         if (id != null) classifyByIdentity(id) else { classifyByWords(); markBrandlessTwins() }

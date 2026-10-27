@@ -4382,9 +4382,7 @@ class MainActivity : Activity() {
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         progress.visibility = View.GONE
-        status.visibility = View.VISIBLE
-        status.text = (if (watchMode) "Takip listesi" else "Alarmlar") + " ${Alarms.hours(this)} saatte bir arka planda kontrol edilir" +
-            if (watchMode) "; bildirim gönderilmez" else ""
+        status.visibility = View.GONE
         results.removeAllViews()
         val list = Alarms.load(this).filter { it.watch == watchMode }
         val head = LinearLayout(this).apply {
@@ -4398,6 +4396,7 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener {
                 status.text = "Kontrol ediliyor…"
+                status.visibility = View.VISIBLE
                 progress.visibility = View.VISIBLE
                 Thread {
                     val n = try { Alarms.checkAll(applicationContext) } catch (e: Exception) { 0 }

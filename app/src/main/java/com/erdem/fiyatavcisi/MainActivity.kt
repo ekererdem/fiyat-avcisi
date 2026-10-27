@@ -801,6 +801,55 @@ class MainActivity : Activity() {
             });
           }
           cards.forEach(function(c){ delete c.alts; });
+          // Trendyol: sayfa sadece ilk ürünleri çiziyor; sitenin kendi arama servisinden ilk 2 sayfayı da oku
+          if (location.host.indexOf('trendyol.com') >= 0 && __RQ__) {
+            try {
+              if (!window.__faTy) {
+                var tyAll = [];
+                for (var pg = 1; pg <= 2; pg++) {
+                  var tx = new XMLHttpRequest();
+                  tx.open('GET', 'https://public.trendyol.com/discovery-web-searchgw-service/v2/api/infinite-scroll/sr?q=' +
+                    encodeURIComponent(__RQ__) + '&pi=' + pg + '&culture=tr-TR&storefrontId=1', false);
+                  tx.setRequestHeader('Accept', 'application/json');
+                  tx.send();
+                  if (tx.status != 200) break;
+                  var got = [];
+                  (function walk(o, d){
+                    if (!o || d > 8) return;
+                    if (Array.isArray(o)) { o.forEach(function(e){ walk(e, d + 1); }); return; }
+                    if (typeof o == 'object') {
+                      if (typeof o.url == 'string' && /-p-[0-9]+/.test(o.url) && o.name && o.price) got.push(o);
+                      else for (var k in o) walk(o[k], d + 1);
+                    }
+                  })(JSON.parse(tx.responseText), 0);
+                  tyAll = tyAll.concat(got);
+                  if (got.length < 10) break;
+                }
+                window.__faTy = tyAll;
+              }
+              var tyNum = function(v){ if (v == null) return 0; if (typeof v == 'object') v = v.value != null ? v.value : v.text; var n = parseFloat(String(v).replace(/[^0-9.,]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',', '.')); return isNaN(n) ? 0 : n; };
+              var have = {};
+              cards.forEach(function(c){ var m = (c.link || '').match(/-p-([0-9]+)/); if (m) have[m[1]] = c; });
+              window.__faTy.forEach(function(o){
+                var pr = o.price || {};
+                var cands = [tyNum(pr.discountedPrice), tyNum(pr.sellingPrice), tyNum(pr.buyingPrice)].filter(function(x){ return x > 0; });
+                if (!cands.length) return;
+                var p = Math.min.apply(null, cands);
+                var lp = tyNum(pr.originalPrice);
+                var brand = o.brand && o.brand.name ? String(o.brand.name) : '';
+                var nm = (brand && String(o.name).toLowerCase().indexOf(brand.toLowerCase()) < 0 ? brand + ' ' : '') + o.name;
+                var img = (o.images && o.images[0]) || o.image || '';
+                if (img && img.charAt(0) == '/') img = 'https://cdn.dsmcdn.com' + img;
+                var link = /^https?:/.test(o.url) ? o.url : 'https://www.trendyol.com' + o.url;
+                var id = (link.match(/-p-([0-9]+)/) || [])[1];
+                if (id && have[id]) { if (!have[id].img && img) have[id].img = img; return; }
+                var rs = o.ratingScore || {};
+                cards.push({ t: nm, p: p, lp: lp > p ? lp : 0, link: link, img: img, raw: nm,
+                  r: rs.averageRating ? String(Math.round(rs.averageRating * 10) / 10) : '', rc: rs.totalCount ? String(rs.totalCount) : '' });
+                if (id) have[id] = true;
+              });
+            } catch (e) {}
+          }
           return JSON.stringify({ title: document.title, url: location.href, block: hit,
             anchors: anchors.length, fallback: usedFallback, links: all.length,
             sampleLinks: cards.length ? [] : sampleLinks, cards: cards,
@@ -2084,7 +2133,7 @@ class MainActivity : Activity() {
         "eau" to "Eau", "elixir" to "Elixir", "extreme" to "Extreme", "intense" to "Intense", "absolu" to "Absolu", "forte" to "Forte",
         "aktif" to "Aktif Bebek", "premium" to "Premium", "kulot" to "Külot", "pants" to "Külot", "harmonie" to "Harmonie",
         "stick" to "Stick", "kavanoz" to "Kavanoz", "cam" to "Kavanoz",
-        "ps" to "Çocuk", "gs" to "Çocuk", "td" to "Çocuk", "cocuk" to "Çocuk", "kids" to "Çocuk", "junior" to "Çocuk",
+        "ps" to "Çocuk", "gs" to "Çocuk", "td" to "Çocuk", "cocuk" to "Çocuk", "kids" to "Çocuk",
         "plt" to "Platform", "jewel" to "Jewel", "lx" to "LX", "se" to "SE", "flyease" to "Flyease", "retro" to "Retro",
         "nature" to "Next Nature", "nn" to "Next Nature", "fontanka" to "Fontanka",
         // Aynı isimli başka ürün türleri (parfüm ararken tıraş sonrası losyon vb.)

@@ -725,55 +725,6 @@ class MainActivity : Activity(), MatchLogic {
             });
           }
           cards.forEach(function(c){ delete c.alts; });
-          // Trendyol: sayfa sadece ilk ürünleri çiziyor; sitenin kendi arama servisinden ilk 2 sayfayı da oku
-          if (location.host.indexOf('trendyol.com') >= 0 && __RQ__) {
-            try {
-              if (!window.__faTy) {
-                var tyAll = [];
-                for (var pg = 1; pg <= 2; pg++) {
-                  var tx = new XMLHttpRequest();
-                  tx.open('GET', 'https://public.trendyol.com/discovery-web-searchgw-service/v2/api/infinite-scroll/sr?q=' +
-                    encodeURIComponent(__RQ__) + '&pi=' + pg + '&culture=tr-TR&storefrontId=1', false);
-                  tx.setRequestHeader('Accept', 'application/json');
-                  tx.send();
-                  if (tx.status != 200) break;
-                  var got = [];
-                  (function walk(o, d){
-                    if (!o || d > 8) return;
-                    if (Array.isArray(o)) { o.forEach(function(e){ walk(e, d + 1); }); return; }
-                    if (typeof o == 'object') {
-                      if (typeof o.url == 'string' && /-p-[0-9]+/.test(o.url) && o.name && o.price) got.push(o);
-                      else for (var k in o) walk(o[k], d + 1);
-                    }
-                  })(JSON.parse(tx.responseText), 0);
-                  tyAll = tyAll.concat(got);
-                  if (got.length < 10) break;
-                }
-                window.__faTy = tyAll;
-              }
-              var tyNum = function(v){ if (v == null) return 0; if (typeof v == 'object') v = v.value != null ? v.value : v.text; var n = parseFloat(String(v).replace(/[^0-9.,]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',', '.')); return isNaN(n) ? 0 : n; };
-              var have = {};
-              cards.forEach(function(c){ var m = (c.link || '').match(/-p-([0-9]+)/); if (m) have[m[1]] = c; });
-              window.__faTy.forEach(function(o){
-                var pr = o.price || {};
-                var cands = [tyNum(pr.discountedPrice), tyNum(pr.sellingPrice), tyNum(pr.buyingPrice)].filter(function(x){ return x > 0; });
-                if (!cands.length) return;
-                var p = Math.min.apply(null, cands);
-                var lp = tyNum(pr.originalPrice);
-                var brand = o.brand && o.brand.name ? String(o.brand.name) : '';
-                var nm = (brand && String(o.name).toLowerCase().indexOf(brand.toLowerCase()) < 0 ? brand + ' ' : '') + o.name;
-                var img = (o.images && o.images[0]) || o.image || '';
-                if (img && img.charAt(0) == '/') img = 'https://cdn.dsmcdn.com' + img;
-                var link = /^https?:/.test(o.url) ? o.url : 'https://www.trendyol.com' + o.url;
-                var id = (link.match(/-p-([0-9]+)/) || [])[1];
-                if (id && have[id]) { if (!have[id].img && img) have[id].img = img; return; }
-                var rs = o.ratingScore || {};
-                cards.push({ t: nm, p: p, lp: lp > p ? lp : 0, link: link, img: img, raw: nm,
-                  r: rs.averageRating ? String(Math.round(rs.averageRating * 10) / 10) : '', rc: rs.totalCount ? String(rs.totalCount) : '' });
-                if (id) have[id] = true;
-              });
-            } catch (e) {}
-          }
           return JSON.stringify({ title: document.title, url: location.href, block: hit,
             anchors: anchors.length, fallback: usedFallback, links: all.length,
             sampleLinks: cards.length ? [] : sampleLinks, cards: cards,
@@ -1724,7 +1675,7 @@ class MainActivity : Activity(), MatchLogic {
             val i = next++
             val site = list[i]
             viewOf[i] = v
-            runSite(v, site, q, simpleUsed = noSimple, reloaded = false) { d, simpleUsed ->
+            fun siteDone(d: JSONObject?, simpleUsed: Boolean) {
                 if (gen == phaseGen && !phaseDone) {
                     done[i] = true
                     collect(site.name, d, q, simpleUsed, slots.getValue(v))
@@ -1739,6 +1690,11 @@ class MainActivity : Activity(), MatchLogic {
                     onEach()
                     if (left == 0) finish() else launch(v)
                 }
+            }
+            runSite(v, site, q, simpleUsed = noSimple, reloaded = false) { d0, simpleUsed ->
+                // Trendyol sayfası sadece ilk ürünleri çiziyor: sitenin arama servisindeki sonuçlar da eklenir
+                if (site.name == "Trendyol" && gen == phaseGen && !phaseDone) trendyolApi(v, q, d0) { d -> siteDone(d, simpleUsed) }
+                else siteDone(d0, simpleUsed)
             }
         }
         pool.forEach { launch(it) }
@@ -1762,6 +1718,71 @@ class MainActivity : Activity(), MatchLogic {
         }
         handler.postDelayed({ cut() }, 14000)
     }
+
+    /** Trendyol arama servisi (JSON) sayfa olarak açılır, ürünler okunur ve sayfadan okunanlarla birleştirilir */
+    private fun trendyolApi(v: WebView, q: String, d: JSONObject?, done: (JSONObject?) -> Unit) {
+        val url = "https://public.trendyol.com/discovery-web-searchgw-service/v2/api/infinite-scroll/sr?q=" +
+            URLEncoder.encode(siteQuery(q), "UTF-8").replace("+", "%20") + "&pi=1&culture=tr-TR&storefrontId=1"
+        loadAndPoll(v, url, trendyolApiJs, maxMs = 7000, scroll = false, ready = { r, n ->
+            (r?.optJSONArray("cards")?.length() ?: 0) > 0 || r?.optBoolean("empty") == true || n >= 6
+        }) { r ->
+            val extra = r?.optJSONArray("cards")
+            val base = d ?: JSONObject().put("cards", org.json.JSONArray())
+            val cards = base.optJSONArray("cards") ?: org.json.JSONArray().also { base.put("cards", it) }
+            val have = HashMap<String, JSONObject>()
+            for (i in 0 until cards.length()) {
+                val c = cards.getJSONObject(i)
+                Regex("-p-([0-9]+)").find(c.optString("link"))?.let { have[it.groupValues[1]] = c }
+            }
+            var added = 0
+            if (extra != null) for (i in 0 until extra.length()) {
+                val c = extra.getJSONObject(i)
+                val id = Regex("-p-([0-9]+)").find(c.optString("link"))?.groupValues?.get(1)
+                val old = id?.let { have[it] }
+                if (old != null) { if (old.optString("img").isEmpty()) old.put("img", c.optString("img")); continue }
+                cards.put(c); added++
+                if (id != null) have[id] = c
+            }
+            if (added > 0) base.put("extra", base.optInt("extra") + added)
+            done(base)
+        }
+    }
+
+    private val trendyolApiJs = """
+        (function(){
+          var txt = document.body ? document.body.innerText : '';
+          if (!txt || txt.charAt(0) != '{') return JSON.stringify({ cards: [], links: 0 });
+          var data; try { data = JSON.parse(txt); } catch (e) { return JSON.stringify({ cards: [], links: 0 }); }
+          var got = [];
+          (function walk(o, d){
+            if (!o || d > 8) return;
+            if (Array.isArray(o)) { o.forEach(function(e){ walk(e, d + 1); }); return; }
+            if (typeof o == 'object') {
+              if (typeof o.url == 'string' && /-p-[0-9]+/.test(o.url) && o.name && o.price) got.push(o);
+              else for (var k in o) walk(o[k], d + 1);
+            }
+          })(data, 0);
+          function num(v){ if (v == null) return 0; if (typeof v == 'object') v = v.value != null ? v.value : v.text;
+            if (typeof v == 'number') return v;
+            var n = parseFloat(String(v).replace(/[^0-9.,]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',', '.')); return isNaN(n) ? 0 : n; }
+          var cards = [];
+          got.forEach(function(o){
+            var pr = o.price || {};
+            var c = [num(pr.discountedPrice), num(pr.sellingPrice), num(pr.buyingPrice)].filter(function(x){ return x > 0; });
+            if (!c.length) return;
+            var p = Math.min.apply(null, c), lp = num(pr.originalPrice);
+            var brand = o.brand && o.brand.name ? String(o.brand.name) : '';
+            var nm = (brand && String(o.name).toLowerCase().indexOf(brand.toLowerCase()) < 0 ? brand + ' ' : '') + o.name;
+            var img = (o.images && o.images[0]) || o.image || '';
+            if (img && img.charAt(0) == '/') img = 'https://cdn.dsmcdn.com' + img;
+            var link = /^https?:/.test(o.url) ? o.url : 'https://www.trendyol.com' + o.url;
+            var rs = o.ratingScore || {};
+            cards.push({ t: nm, p: p, lp: lp > p ? lp : 0, link: link, img: img, raw: nm,
+              r: rs.averageRating ? String(Math.round(rs.averageRating * 10) / 10) : '', rc: rs.totalCount ? String(rs.totalCount) : '' });
+          });
+          return JSON.stringify({ cards: cards, links: cards.length, empty: cards.length == 0 && got.length == 0 && txt.length > 50 });
+        })()
+    """.trimIndent()
 
     private fun stopAll() {
         phaseGen++

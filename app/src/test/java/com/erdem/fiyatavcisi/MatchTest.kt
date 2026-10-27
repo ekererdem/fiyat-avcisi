@@ -44,7 +44,9 @@ class MatchTest {
             "Prima Premium Care 6 Numara Bebek Bezi (3 x 35) Toplam 105 Adet" to same,
             "Prima Kulot Bebek Bezi Premium Care 6 Numara 28 Adet (2 paketi)" to differentModel,
             "Prima Premium Care 6 Numara Junior 28'li Külot Bez" to differentModel,
-            "Prima Bebek Bezi Aktif Bebek 6 Numara Mega Fırsat Paketi 76 Adet" to differentModel,
+            "Prima Bebek Bezi Aktif Bebek 6 Numara Mega Fırsat Paketi 76 Adet" to notSame,
+            "Prima Premium Care Aylık Fırsat Paketi Bebek Bezi 6 Numara 93 Adet" to same,
+            "Prima Premium Care Aylık Fırsat Paketi 6 Numara 13-18 kg 93 Adet" to same,
             "Prima Premium Care 5 Numara 120 Adet Bebek Bezi" to notSame,
         )),
         // --- Adet aramasında farklı paket ayrı başlıkta

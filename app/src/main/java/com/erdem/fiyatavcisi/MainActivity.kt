@@ -88,14 +88,6 @@ class MainActivity : Activity(), MatchLogic {
     // Kimlik bulmak için hızlı taranan siteler (barkod ve kodla aramada en iyi sonuç verenler)
     private val resolverSites by lazy { listOf(sites[0], sites[2], sites[1]) }
 
-    // Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
-    private val accessoryWords = listOf(
-        "uyumlu", "kapak", "kulaklık ucu", "uçları", "askı", "temizleme", "kalemi", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
-        "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
-        "replacement", "compatible", "blades", "blade kit", "charger", "cable", "case for",
-        "cüzdan", "kartlık", "anahtarlık", "kordon", "kayış", "bağcık", "çorap", "tişört", "şapka", "poster",
-        "lego", "oyuncak", "maket", "puzzle", "figür",
-    )
 
     // Tema renkleri (açık / koyu), applyTheme() ayarlar. "gold" vurgu rengidir (C temasında yeşil).
     private var dark = false

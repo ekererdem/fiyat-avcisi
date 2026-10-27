@@ -7,6 +7,15 @@ import java.util.Locale
  * Eşleştirme çekirdeği: ilan adlarını aramayla karşılaştırıp "aynı ürün / başka paket / farklı model…" kararını verir.
  * Android'den bağımsızdır; app/src/test altındaki testler bu dosyayı doğrudan çalıştırır.
  */
+// Başlıkta geçerse "aksesuar olabilir" sayılan kelimeler
+val accessoryWords = listOf(
+    "uyumlu", "kapak", "kulaklık ucu", "uçları", "askı", "temizleme", "kalemi", "yedek bıçak", "yedek başlık", "yedek bicak", "kablo", "kılıf", "kilif", "adaptör", "adaptor",
+    "koruyucu", "stand", "şarj aleti", "sarj aleti", "şarj cihazı", "çanta", "sticker",
+    "replacement", "compatible", "blades", "blade kit", "charger", "cable", "case for",
+    "cüzdan", "kartlık", "anahtarlık", "kordon", "kayış", "bağcık", "çorap", "tişört", "şapka", "poster",
+    "lego", "oyuncak", "maket", "puzzle", "figür",
+)
+
 data class Offer(
     val site: String,
     val title: String,

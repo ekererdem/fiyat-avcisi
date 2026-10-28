@@ -45,6 +45,9 @@ data class Alarm(
     var groupQuery: String = "",
     // Sadece takip: fiyat ve geçmiş tutulur, bildirim gönderilmez
     var watch: Boolean = false,
+    // En ucuz satıcı (çok satıcılı sitelerde) ve sayfadaki satıcı sayısı
+    var seller: String = "",
+    var sellers: Int = 0,
 ) {
     fun unitPrice(p: Double = lastPrice): Double? = if (unitAmount > 0 && p > 0) p / unitAmount else null
 }
@@ -78,7 +81,7 @@ object Alarms {
                     j.optLong("checked"), j.optString("status"),
                     j.optDouble("unitAmount", 0.0), j.optString("unitName"), j.optDouble("unitTarget", 0.0),
                     j.optLong("groupId", 0), j.optString("groupName"), j.optString("groupQuery"),
-                    j.optBoolean("watch", false),
+                    j.optBoolean("watch", false), j.optString("seller"), j.optInt("sellers", 0),
                 )
             } catch (e: Exception) { null }
         }.toMutableList()
@@ -94,6 +97,7 @@ object Alarms {
                 put("checked", a.lastCheck); put("status", a.status)
                 put("unitAmount", a.unitAmount); put("unitName", a.unitName); put("unitTarget", a.unitTarget)
                 put("groupId", a.groupId); put("groupName", a.groupName); put("groupQuery", a.groupQuery); put("watch", a.watch)
+                put("seller", a.seller); put("sellers", a.sellers)
             })
         }
         prefs(ctx).edit().putString("list", arr.toString()).apply()
@@ -157,7 +161,11 @@ object Alarms {
 
     // ---------- Sayfadan fiyat okuma ----------
 
-    data class PageInfo(val price: Double?, val inStock: Boolean?, val title: String, val image: String, val finalUrl: String, val note: String)
+    data class PageInfo(val price: Double?, val inStock: Boolean?, val title: String, val image: String, val finalUrl: String, val note: String,
+                        val seller: String = "", val sellers: Int = 0)
+
+    /** Aynı ürün sayfasında birçok satıcı olan siteler: sayfa tarayıcıyla okunup en ucuz satıcı bulunur */
+    fun multiSeller(link: String) = Regex("trendyol\\.com|hepsiburada\\.com|n11\\.com|pazarama\\.com").containsMatchIn(link)
 
     /** "1.234,56" (Türkçe) ya da "1234.56" (veri) yazımını sayıya çevirir */
     private fun parseNum(s: String): Double? {
@@ -258,7 +266,7 @@ object Alarms {
 
     /** Bütün alarmları kontrol eder; fiyat düştüyse ya da stoğa girdiyse bildirim gönderir */
     /** Düz okumanın yetmediği kayıt: adı/resmi/fiyatı yok ya da son kontrol okunamadı */
-    fun needsBrowser(a: Alarm) = Links.looksLikeUrl(a.title) || a.title.endsWith(" ürünü") || a.image.isEmpty() ||
+    fun needsBrowser(a: Alarm) = multiSeller(a.link) || Links.looksLikeUrl(a.title) || a.title.endsWith(" ürünü") || a.image.isEmpty() ||
         a.lastPrice <= 0 || a.status.startsWith("fiyat okunamadı") || a.status.startsWith("site yanıtı") || a.status.startsWith("kontrol edilemedi")
 
     /** only: sadece bu kayıtlar · pre: önceden (tarayıcıyla) okunmuş sayfalar */
@@ -267,8 +275,12 @@ object Alarms {
         var notified = 0
         for (a in list) {
             if (only != null && a.id !in only) continue
+            // Çok satıcılı siteler genel turda atlanır: tarayıcıyla okunup en ucuz satıcıyla ayrıca değerlendirilir
+            if (only == null && multiSeller(a.link)) continue
             try {
                 // Kısa/takip linkiyle eklenmiş kayıt: gerçek ürün sayfasına çevir
+                // Eski kayıtlar: satıcıya kilitleyen ekleri at
+                if (Links.isProductPage(a.link)) a.link = Links.clean(a.link)
                 if (!Links.isProductPage(a.link)) {
                     val real = Links.resolve(a.link)
                     if (Links.isProductPage(real)) { a.link = real; a.site = Links.siteName(real) }
@@ -277,6 +289,7 @@ object Alarms {
                 if (pre[a.id] != null && Links.isProductPage(r.finalUrl)) a.link = Links.clean(r.finalUrl)
                 a.lastCheck = System.currentTimeMillis()
                 if (a.image.isEmpty() && r.image.isNotEmpty()) a.image = r.image
+                if (r.seller.isNotEmpty()) { a.seller = r.seller; a.sellers = r.sellers }
                 // İlk kez fiyat okunduysa başlangıç fiyatı da o olur
                 if (a.startPrice <= 0 && r.price != null) { a.startPrice = r.price; a.lowest = r.price }
                 // Ad yerine link yazılmışsa sayfadaki adı al
@@ -388,8 +401,10 @@ class AlarmJobService : JobService() {
             val todo = try { Alarms.load(applicationContext).filter { Alarms.needsBrowser(it) } } catch (e: Exception) { emptyList() }
             if (todo.isEmpty()) { jobFinished(params, false); return@Thread }
             PageReader.readAll(applicationContext, todo) { pre ->
+                val failed = todo.map { it.id }.filter { it !in pre }.toSet()
                 Thread {
                     try { if (pre.isNotEmpty()) Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
+                    try { if (failed.isNotEmpty()) Alarms.checkAll(applicationContext, failed) } catch (e: Exception) {}
                     jobFinished(params, false)
                 }.start()
             }

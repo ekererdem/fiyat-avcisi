@@ -47,8 +47,8 @@ object Links {
         // Trendyol uygulama linki: Page=Product&ContentId=...
         val content = params["contentid"] ?: params["productcontentid"]
         if (content != null && content.all { it.isDigit() } && (params["page"]?.equals("product", true) != false)) {
-            val m = params["merchantid"]?.takeIf { it.all { c -> c.isDigit() } }
-            return "https://www.trendyol.com/urun/urun-p-$content" + (m?.let { "?merchantId=$it" } ?: "")
+            // Satıcı numarası bilerek atılır: ürün sayfası izlenir, en ucuz satıcı okunur
+            return "https://www.trendyol.com/urun/urun-p-$content"
         }
         for (k in listOf("adj_redirect", "adj_fallback", "redirect", "redirect_url", "url", "link", "deep_link",
             "deeplink", "fallback", "\$fallback_url", "target", "u", "af_web_dp", "af_dp")) {
@@ -103,7 +103,8 @@ object Links {
     /** Takip eklerini at (utm, adjust…), ürün için gereken parametreleri koru */
     fun clean(url: String): String {
         if (!url.contains('?')) return url
-        val keep = setOf("merchantid", "boutiqueid", "magaza", "smid", "th", "psc")
+        // Satıcıya kilitleyen ekler (merchantId, magaza, smid) atılır; sadece ürün çeşidini belirleyenler kalır
+        val keep = setOf("th", "psc", "v", "variant")
         val base = url.substringBefore('?')
         val q = url.substringAfter('?').substringBefore('#').split('&')
             .filter { it.substringBefore('=').lowercase() in keep }

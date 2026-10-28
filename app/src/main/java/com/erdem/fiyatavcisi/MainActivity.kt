@@ -211,7 +211,6 @@ class MainActivity : Activity(), MatchLogic {
             navItems.add(Triple(key, iv, tv))
         }
         item("home", R.drawable.ic_home, "Listem") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
-        item("search", R.drawable.ic_search, "Ara") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome(search = true) }
         item("settings", R.drawable.ic_gear, "Ayarlar") { showSettings() }
         updateNav()
         updateGearDot()
@@ -1370,7 +1369,7 @@ class MainActivity : Activity(), MatchLogic {
             val hist = History.get(this, "g:$gid")
             out.add(WishEntry(gid, best, items, best.groupName.ifEmpty { best.title }, p, p?.let(fmt) ?: "?",
                 t, if (t > 0) fmt(t) else null, hist.firstOrNull()?.second ?: 0.0, hist.minOfOrNull { it.second } ?: 0.0,
-                best.watch, "${items.size} site · en uygun ${best.site}", hist))
+                best.watch, "${items.size} link · en ucuz ${best.site}" + (if (best.seller.isNotEmpty()) " · ${best.seller}" else ""), hist))
         }
         for (a in all.filter { it.groupId == 0L }) {
             val byUnit = a.unitTarget > 0
@@ -1379,7 +1378,8 @@ class MainActivity : Activity(), MatchLogic {
             val t = if (byUnit) a.unitTarget else a.target
             out.add(WishEntry(0L, a, listOf(a), a.title, p, p?.let(fmt) ?: "?", t, if (t > 0) fmt(t) else null,
                 if (byUnit) 0.0 else a.startPrice, if (byUnit) 0.0 else a.lowest, a.watch,
-                a.site + if (a.inStock == false) " · stokta yok" else "", History.offer(this, a.link)))
+                a.site + (if (a.seller.isNotEmpty()) " · ${a.seller}" + (if (a.sellers > 1) " (${a.sellers} satıcıda en ucuz)" else "") else "") +
+                    (if (a.inStock == false) " · stokta yok" else ""), History.offer(this, a.link)))
         }
         // Hedefe inenler en üstte, sonra en çok ucuzlayanlar, sonra en yeniler
         return out.sortedWith(compareByDescending<WishEntry> { it.hit }.thenByDescending { it.drop }.thenByDescending { it.focus.id })
@@ -1448,12 +1448,7 @@ class MainActivity : Activity(), MatchLogic {
             setPadding(dp(16), dp(11), dp(16), dp(11))
             setOnClickListener { refreshList() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        else btns.addView(label("Ürün ara", 14f, ink, true).apply {
-            gravity = Gravity.CENTER
-            background = rounded(surface, 22, line)
-            setPadding(dp(16), dp(11), dp(16), dp(11))
-            setOnClickListener { goHome(search = true) }
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
         results.addView(btns)
 
         if (list.isEmpty()) {
@@ -1477,7 +1472,8 @@ class MainActivity : Activity(), MatchLogic {
                         addView(label(t, 14f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     })
                 }
-                addView(label("Ya da linki kopyala, yukarıdaki “Link yapıştır”a dokun.", 12f, muted).apply { setPadding(0, dp(10), 0, 0) })
+                addView(label("Ya da linki kopyala, yukarıdaki “Link yapıştır”a dokun. Aynı ürünün başka sitedeki linkini eklerken “Listemdeki ürüne ekle”yi seç; " +
+                    "hepsi tek kartta izlenir, en ucuz site ve satıcı öne çıkar.", 12f, muted).apply { setPadding(0, dp(10), 0, 0) })
             })
             return
         }
@@ -1556,15 +1552,15 @@ class MainActivity : Activity(), MatchLogic {
             if (e.lowest > 0) card.addView(label("En düşük ${if (a.unitTarget > 0) Alarms.unitText(e.lowest, a.unitName) else money(e.lowest)} · ${e.history.size} gündür izleniyor", 11f, muted)
                 .apply { setPadding(dp(2), dp(2), dp(2), 0) })
         }
-        // Alt düğmeler: diğer sitelerde ara, siteye git
+        // Alt düğmeler: başka site linki ekle, siteye git
         card.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10), 0, 0)
-            if (e.gid == 0L) addView(label("🔍  Diğer sitelerde ara", 13f, ink, true).apply {
+            addView(label("+  Başka site linki", 13f, ink, true).apply {
                 gravity = Gravity.CENTER
                 background = rounded(greyBg, 16)
                 setPadding(dp(10), dp(9), dp(10), dp(9))
-                setOnClickListener { searchOtherSites(a) }
+                setOnClickListener { attachFromClipboard(a) }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f).apply { marginEnd = dp(8) })
             addView(label("Siteye git ›", 13f, ink, true).apply {
                 gravity = Gravity.CENTER
@@ -1575,6 +1571,60 @@ class MainActivity : Activity(), MatchLogic {
         })
         results.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { setMargins(dp(2), dp(5), dp(2), dp(5)) })
+    }
+
+    /** Paylaşılan/yapıştırılan linkten yeni ilan kaydı (gruba eklenmeden önce) */
+    private fun newListing(title: String, link: String, site: String, image: String, price: Double?, inStock: Boolean?, info: Alarms.PageInfo?) =
+        Alarm(id = System.currentTimeMillis(), title = title, site = site, link = Links.clean(link), image = image,
+            startPrice = price ?: 0.0, lastPrice = price ?: 0.0, lowest = price ?: 0.0, target = 0.0, wantStock = false, inStock = inStock,
+            lastCheck = 0L, status = if (price != null) "fiyat okundu" else "henüz kontrol edilmedi",
+            seller = info?.seller.orEmpty(), sellers = info?.sellers ?: 0)
+
+    /** İlanı listedeki karta katar: kart tek linkliyse gruba çevrilir; hedef ve bildirim ayarı kartınkiyle aynı olur */
+    private fun joinGroup(target: Alarm, add: Alarm) {
+        val all = Alarms.load(this)
+        val cur = all.firstOrNull { it.id == target.id } ?: target
+        val gid = if (cur.groupId != 0L) cur.groupId else System.currentTimeMillis()
+        val members = all.filter { if (cur.groupId != 0L) it.groupId == cur.groupId else it.id == cur.id }
+        val name = members.firstOrNull()?.groupName?.ifEmpty { null } ?: cleanTitle(cur.title)
+        if (members.any { Links.clean(it.link).substringBefore('?') == Links.clean(add.link).substringBefore('?') }) {
+            Toast.makeText(this, "Bu link zaten bu kartta", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val head = members.first()
+        val items = members.map { it.copy(groupId = gid, groupName = name) } +
+            add.copy(id = maxOf(System.currentTimeMillis(), (all.maxOfOrNull { it.id } ?: 0L) + 1), groupId = gid, groupName = name,
+                target = head.target, unitTarget = 0.0, unitAmount = 0.0, watch = head.watch, wantStock = head.wantStock)
+        Alarms.addGroup(this, items)
+        Toast.makeText(this, "${add.site} linki karta eklendi · ${items.size} link", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Listedeki kartlardan birini seç (yeni linkin adına en çok benzeyen üstte) */
+    private fun chooseCard(forTitle: String, pick: (Alarm) -> Unit) {
+        val base = words(forTitle)
+        val list = wishEntries(Alarms.load(this)).sortedByDescending { (words(it.title) intersect base).size }
+        if (list.isEmpty()) return
+        AlertDialog.Builder(this).setTitle("Hangi ürüne eklensin?")
+            .setItems(list.map { e -> "${e.title.take(60)}\n${e.items.map { it.site }.distinct().joinToString(", ")} · ${e.priceText}" }.toTypedArray()) { _, i ->
+                pick(list[i].focus)
+            }
+            .setNegativeButton("Vazgeç", null).show()
+    }
+
+    /** Panodaki başka site linkini bu karta ekler */
+    private fun attachFromClipboard(a: Alarm) {
+        val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = try { cb.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty() } catch (e: Exception) { "" }
+        val url = Regex("https?://\\S+").find(text)?.value
+        val mine = Alarms.load(this).filter { if (a.groupId != 0L) it.groupId == a.groupId else it.id == a.id }.map { it.link.substringBefore('?') }
+        if (url == null || url.substringBefore('?') in mine) {
+            AlertDialog.Builder(this).setTitle("Başka site linki ekle")
+                .setMessage("Aynı ürünü diğer sitede (Hepsiburada, Amazon…) aç, linkini kopyala, sonra tekrar bu düğmeye dokun.\n\n" +
+                    "Ya da o uygulamada Paylaş → İzci yap ve “Listemdeki ürüne ekle”yi seç.")
+                .setPositiveButton("Tamam", null).show()
+            return
+        }
+        handleSharedText(text, attachTo = a)
     }
 
     /** Aynı ürünü öbür sitelerde arar; sonuçlarda zile dokununca hepsi tek kartta izlenir */
@@ -3628,6 +3678,8 @@ class MainActivity : Activity(), MatchLogic {
         })
         col.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else "?", 30f,
             if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
+        if (a.seller.isNotEmpty()) col.addView(label("Satıcı: ${a.seller}" + if (a.sellers > 1) " · ${a.sellers} satıcı arasında en ucuz" else "", 13f, muted)
+            .apply { setPadding(0, dp(4), 0, 0) })
         a.unitPrice()?.let { col.addView(label(Alarms.unitText(it, a.unitName), 13f, muted).apply { setPadding(0, dp(4), 0, 0) }) }
         val t = if (a.unitTarget > 0) Alarms.unitText(a.unitTarget, a.unitName) else if (a.target > 0) money(a.target) else null
         if (!a.watch) col.addView(label(if (t != null) "Hedef: $t" else "Hedef: her ucuzlamada haber ver", 13f, ink, true).apply { setPadding(0, dp(6), 0, 0) })
@@ -3699,7 +3751,7 @@ class MainActivity : Activity(), MatchLogic {
         }
         act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
         // Tek ilan: aynı ürünü diğer sitelerde ara; sonuçlarda zile dokunup bütün sitelerde izlemeye geçilir
-        if (gid == 0L) act(R.drawable.ic_search, "Diğer siteler", false) { searchOtherSites(a) }
+        act(R.drawable.ic_share, "Link ekle", false) { attachFromClipboard(a) }
         col.addView(acts)
 
         // Fiyat geçmişi
@@ -3729,9 +3781,22 @@ class MainActivity : Activity(), MatchLogic {
                     setPadding(0, dp(12), 0, dp(12))
                     // Dokununca o sitedeki ürün sayfası açılır; uzun basınca bu sayfada o ilana geçilir
                     setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(x.link))) } catch (e: Exception) {} }
-                    setOnLongClickListener { alarmPage(gid, x.id); true }
+                    setOnLongClickListener {
+                        AlertDialog.Builder(this@MainActivity).setTitle("${x.site} linki")
+                            .setItems(arrayOf("Bu linkin ayrıntısına geç", "Bu linki karttan çıkar")) { _, w ->
+                                if (w == 0) alarmPage(gid, x.id)
+                                else {
+                                    Alarms.remove(this@MainActivity, x.id)
+                                    val rest = Alarms.load(this@MainActivity).filter { it.groupId == gid }
+                                    if (rest.isEmpty()) goHome() else alarmPage(gid, rest.first().id)
+                                }
+                            }.show()
+                        true
+                    }
                     addView(label("● ", 12f, siteColors[x.site] ?: muted))
-                    addView(label(x.site, 14f, if (x.id == a.id) gold else ink, x.id == a.id), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, if (x.id == a.id) gold else ink, x.id == a.id).apply {
+                        maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true))
                 })
                 col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
@@ -4348,8 +4413,11 @@ class MainActivity : Activity(), MatchLogic {
                     else Alarms.remove(this@MainActivity, existing.id)
                     if (compareName != null && !running) goHome()
                     else if (offers.isNotEmpty() && !running) render(final = finished)
-                } else if (!compareName.isNullOrBlank()) setNeutralButton("Karşılaştır") { _, _ ->
-                    input.setText(compareName); startTest()
+                } else if (compareName != null && Alarms.load(this@MainActivity).isNotEmpty()) setNeutralButton("Listemdeki ürüne ekle") { _, _ ->
+                    chooseCard(title) { target ->
+                        joinGroup(target, newListing(title, link, site, image, price, available, null))
+                        showHome()
+                    }
                 }
             }
             .setNegativeButton("Vazgeç", null)
@@ -4426,10 +4494,10 @@ class MainActivity : Activity(), MatchLogic {
                     "Bir ürünün sayfasında “Alarm kur”a dokun, hedef fiyatını belirle, gerisini İzci'ye bırak. " +
                         "Trendyol, Hepsiburada gibi uygulamalarda Paylaş → İzci ile de ürün ekleyebilirsin.", 13f, muted)
                     .apply { gravity = Gravity.CENTER; setLineSpacing(dp(2).toFloat(), 1f) })
-                addView(label("Ürün ara", 14f, accentOn, true).apply {
+                addView(label("Listeme dön", 14f, accentOn, true).apply {
                     background = rounded(gold, 22)
                     setPadding(dp(22), dp(11), dp(22), dp(11))
-                    setOnClickListener { goHome(search = true) }
+                    setOnClickListener { goHome() }
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
             return
@@ -4586,7 +4654,7 @@ class MainActivity : Activity(), MatchLogic {
                     val raw = (b.rawValue ?: "").trim()
                     when {
                         raw.startsWith("http") -> handleSharedText(raw)
-                        raw.isNotEmpty() -> { input.setText(raw); startTest() }
+                        raw.isNotEmpty() -> Toast.makeText(this, "Kodda link yok", Toast.LENGTH_SHORT).show()
                     }
                 }
                 .addOnFailureListener { e ->
@@ -4598,13 +4666,13 @@ class MainActivity : Activity(), MatchLogic {
         }
     }
 
-    /** Paylaşılan ya da QR'dan okunan yazı: linkse ürünü oku, değilse ara */
-    private fun handleSharedText(text: String) {
+    /** Paylaşılan ya da yapıştırılan link: ürünü okur; attachTo verilirse o karta ekler */
+    private fun handleSharedText(text: String, attachTo: Alarm? = null) {
         val url = Regex("https?://\\S+").find(text)?.value?.trimEnd('.', ',', ')') ?: run {
-            // Link yoksa paylaşılan yazıyı arama olarak kullan
-            if (text.isNotBlank()) { input.setText(text.take(80)); startTest() }
+            Toast.makeText(this, "Paylaşılan yazıda ürün linki yok", Toast.LENGTH_LONG).show()
             return
         }
+        if (screen != "home" && screen != "item") goHome()
         status.visibility = View.VISIBLE
         status.text = "Paylaşılan ürün okunuyor…"
         progress.visibility = View.VISIBLE
@@ -4612,9 +4680,9 @@ class MainActivity : Activity(), MatchLogic {
             // Kısa/takip linki (Trendyol adj.st, ty.gl, amzn.eu…) → gerçek ürün sayfası
             val real = try { Links.resolve(url) } catch (e: Exception) { url }
             handler.post {
-                if (Links.isProductPage(real)) readShared(real, text)
+                if (Links.isProductPage(real)) readShared(real, text, attachTo)
                 // Olmadıysa linki gizli tarayıcıda açıp gittiği ürün sayfasını yakala
-                else resolveInBrowser(url) { found -> readShared(found ?: real, text) }
+                else resolveInBrowser(url) { found -> readShared(found ?: real, text, attachTo) }
             }
         }.start()
     }
@@ -4674,7 +4742,7 @@ class MainActivity : Activity(), MatchLogic {
         Thread {
             val info = try { Alarms.fetch(url) } catch (e: Exception) { null }
             handler.post {
-                val good = info != null && info.price != null && info.image.isNotEmpty() && !Links.looksLikeUrl(info.title)
+                val good = info != null && info.price != null && info.image.isNotEmpty() && !Links.looksLikeUrl(info.title) && !Alarms.multiSeller(url)
                 if (good) done(info)
                 else readInBrowser(url) { b ->
                     if (b == null) { done(info); return@readInBrowser }
@@ -4682,7 +4750,7 @@ class MainActivity : Activity(), MatchLogic {
                         b.title.takeIf { !Links.looksLikeUrl(it) } ?: info?.title.orEmpty(),
                         b.image.ifEmpty { info?.image.orEmpty() },
                         b.finalUrl.takeIf { Links.isProductPage(it) } ?: info?.finalUrl ?: url,
-                        if ((b.price ?: info?.price) != null) "fiyat okundu" else "fiyat okunamadı"))
+                        if ((b.price ?: info?.price) != null) "fiyat okundu" else "fiyat okunamadı", b.seller, b.sellers))
                 }
             }
         }.start()
@@ -4692,9 +4760,11 @@ class MainActivity : Activity(), MatchLogic {
     private fun repairEntries(then: () -> Unit) {
         val ids = Alarms.load(this).filter { Alarms.needsBrowser(it) }
         PageReader.readAll(this, ids, attach = { attachHidden(it) }) { pre ->
-            if (pre.isEmpty()) { then(); return@readAll }
+            val failed = ids.map { it.id }.filter { it !in pre }.toSet()
             Thread {
-                try { Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
+                try { if (pre.isNotEmpty()) Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
+                // Tarayıcıyla okunamayanlar düz okumayla denenir
+                try { if (failed.isNotEmpty()) Alarms.checkAll(applicationContext, failed) } catch (e: Exception) {}
                 handler.post { then() }
             }.start()
         }
@@ -4706,7 +4776,7 @@ class MainActivity : Activity(), MatchLogic {
         .replace(Regex("[,\\s]+$"), "").replace(Regex("\\s+"), " ").trim()
 
     /** Ürün sayfasını okuyup "Listeye ekle" penceresini açar */
-    private fun readShared(url: String, text: String) {
+    private fun readShared(url: String, text: String, attachTo: Alarm? = null) {
         readProduct(url) { info ->
             run {
                 progress.visibility = View.GONE
@@ -4726,8 +4796,13 @@ class MainActivity : Activity(), MatchLogic {
                 // Ürün adı: sayfa başlığı (site adı ve "Fiyatı" gibi ekler atılır); yoksa paylaşılan yazı
                 val rawTitle = info?.title?.takeIf { !Links.looksLikeUrl(it) }
                     ?: Regex("https?://\\S+").replace(text, "").trim().takeIf { !Links.looksLikeUrl(it) } ?: "$site ürünü"
-                val name = cleanTitle(rawTitle)
-                alarmDialog(name.ifEmpty { finalUrl }, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock,
+                val name = cleanTitle(rawTitle).ifEmpty { "$site ürünü" }
+                if (attachTo != null) {
+                    joinGroup(attachTo, newListing(name, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock, info))
+                    if (screen == "item") alarmPage(Alarms.load(this).firstOrNull { it.id == attachTo.id }?.groupId ?: 0L, attachTo.id) else showHome()
+                    return@run
+                }
+                alarmDialog(name, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock,
                     compareName = name.split(" ").take(8).joinToString(" "))
             }
         }

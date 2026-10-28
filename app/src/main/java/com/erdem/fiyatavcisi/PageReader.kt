@@ -43,9 +43,37 @@ object PageReader {
               '.product-price','#corePrice_feature_div .a-offscreen','.a-price .a-offscreen','.newPrice ins','.unf-p-summary-price'];
             for(var s2=0;s2<sels.length&&price==null;s2++){var e=document.querySelector(sels[s2]);if(e)price=num(e.textContent);}
           }
+          // Satıcılar: sayfanın kendi verisinde (window.__…STATE__, __NEXT_DATA__) satıcı listeleri aranır
+          var sellers=[],featured='';
+          function sp(o){if(o==null)return null;if(typeof o=='number')return o>0?o:null;if(typeof o=='string')return num(o);
+            if(typeof o=='object'){var d=o.discountedPrice||o.sellingPrice||o.finalPrice||o.salePrice;
+              if(d!=null)return sp(d);if(o.value!=null)return sp(o.value);if(o.amount!=null)return sp(o.amount);}return null;}
+          function sname(o){var m=o.merchant||o.seller||o.merchantInfo||o.sellerInfo;
+            var n=(m&&typeof m=='object')?(m.name||m.merchantName||m.sellerName||m.officialName):null;
+            return n||o.merchantName||o.sellerName||null;}
+          function grab(arr){for(var i=0;i<arr.length;i++){var x=arr[i];if(!x||typeof x!='object')continue;
+            var n=sname(x),p=sp(x.price!=null?x.price:(x.prices||x.priceInfo||x.finalPriceOnSale));
+            if(n&&p)sellers.push({n:String(n).trim(),p:p});}}
+          var seen=[];
+          function walk(o,d){if(!o||typeof o!='object'||d>9||seen.length>40000||seen.indexOf(o)>=0)return;seen.push(o);
+            if(Array.isArray(o)){for(var i=0;i<o.length&&i<300;i++)walk(o[i],d+1);return;}
+            if(!featured){var fm=o.merchant||o.seller;if(fm&&typeof fm=='object'&&o.price!=null&&(fm.name||fm.merchantName))featured=String(fm.name||fm.merchantName);}
+            for(var k in o){var v;try{v=o[k];}catch(e){continue;}
+              if(Array.isArray(v)&&/^(other)?(merchants?|sellers?|listings?|merchantListings|otherMerchants|otherSellers|variantListings)$/i.test(k)){grab(v);}
+              if(v&&typeof v=='object')walk(v,d+1);}}
+          try{for(var key in window){if(/STATE|__NEXT_DATA__|__INITIAL|PRODUCT/i.test(key)){try{walk(window[key],0);}catch(e){}}}}catch(e){}
+          try{var nd=document.getElementById('__NEXT_DATA__');if(nd)walk(JSON.parse(nd.textContent),0);}catch(e){}
+          if(!featured){for(var i2=0;i2<lds.length;i2++){try{var jj=JSON.parse(lds[i2].textContent);var oo=[].concat(jj.offers||[]);
+            for(var q=0;q<oo.length;q++){var sl=oo[q]&&oo[q].seller;if(sl&&sl.name){featured=sl.name;break;}}}catch(e){}}}
+          if(featured&&price)sellers.push({n:featured,p:price});
+          // Mantıksız düşük okumalar (başka ürün, taksit) atılır: sayfa fiyatının yarısından ucuz satıcı sayılmaz
+          var uniq={};sellers.forEach(function(s){if(price&&s.p<price*0.5)return;if(!uniq[s.n]||s.p<uniq[s.n])uniq[s.n]=s.p;});
+          var bestN=featured,bestP=price,cnt=0;
+          for(var nm in uniq){cnt++;if(bestP==null||uniq[nm]<bestP){bestP=uniq[nm];bestN=nm;}}
+          if(bestP!=null)price=bestP;
           var h1=document.querySelector('h1');
           if(!name)name=meta('og:title')||(h1?h1.textContent:'')||document.title||'';
-          return JSON.stringify({title:name.replace(/\s+/g,' ').trim(),image:img||'',price:price,inStock:stock,url:location.href});
+          return JSON.stringify({title:name.replace(/\s+/g,' ').trim(),image:img||'',price:price,inStock:stock,url:location.href,seller:bestN||'',sellers:cnt});
         })()
     """.trimIndent()
 
@@ -74,7 +102,7 @@ object PageReader {
                     val price = j.optDouble("price", 0.0).takeIf { it > 0 }
                     val info = Alarms.PageInfo(price, if (j.isNull("inStock")) null else j.optBoolean("inStock"),
                         j.optString("title"), j.optString("image"), j.optString("url", url),
-                        if (price != null) "fiyat okundu" else "fiyat okunamadı")
+                        if (price != null) "fiyat okundu" else "fiyat okunamadı", j.optString("seller"), j.optInt("sellers", 0))
                     val b = best
                     if (b == null || (b.price == null && price != null) || (b.image.isEmpty() && info.image.isNotEmpty())) best = info
                     if (price != null && info.image.isNotEmpty() && !Links.looksLikeUrl(info.title)) { finish(); return@evaluateJavascript }

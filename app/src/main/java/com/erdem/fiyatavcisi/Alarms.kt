@@ -24,7 +24,7 @@ import java.util.Locale
 data class Alarm(
     val id: Long,
     var title: String,
-    val site: String,
+    var site: String,
     var link: String,
     var image: String,
     val startPrice: Double,
@@ -262,9 +262,20 @@ object Alarms {
         var notified = 0
         for (a in list) {
             try {
+                // Kısa/takip linkiyle eklenmiş kayıt: gerçek ürün sayfasına çevir
+                if (!Links.isProductPage(a.link)) {
+                    val real = Links.resolve(a.link)
+                    if (Links.isProductPage(real)) { a.link = real; a.site = Links.siteName(real) }
+                }
                 val r = fetch(a.link)
                 a.lastCheck = System.currentTimeMillis()
                 if (a.image.isEmpty() && r.image.isNotEmpty()) a.image = r.image
+                // Ad yerine link yazılmışsa sayfadaki adı al
+                if (Links.looksLikeUrl(a.title) && !Links.looksLikeUrl(r.title)) {
+                    a.title = r.title.split(Regex("\\s[-|–]\\s")).first()
+                        .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al)\\b"), " ")
+                        .replace(Regex("[,\\s]+$"), "").replace(Regex("\\s+"), " ").trim()
+                }
                 var p = r.price
                 // Mantıksız okuma koruması: kurulduğu fiyatın yarısından çok aşağı bir fiyat büyük ihtimalle
                 // sayfadaki başka bir sayıdır (birim fiyat, taksit, kargo). Kabul etme, eski doğru fiyatı koru.

@@ -1481,10 +1481,6 @@ class MainActivity : Activity(), MatchLogic {
         }
 
         list.forEach { wishCard(it) }
-        results.addView(label("İpucu: Bir ürünü birden çok sitede izlemek için ürün sayfasında “Diğer siteler”e dokun.", 12f, muted).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(14), dp(16), dp(4))
-        })
 
         // Fiyatlar 2 saatten eskiyse sayfa açılınca sessizce yenilenir
         if (!homeChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) refreshList()
@@ -1558,8 +1554,36 @@ class MainActivity : Activity(), MatchLogic {
             if (e.lowest > 0) card.addView(label("En düşük ${if (a.unitTarget > 0) Alarms.unitText(e.lowest, a.unitName) else money(e.lowest)} · ${e.history.size} gündür izleniyor", 11f, muted)
                 .apply { setPadding(dp(2), dp(2), dp(2), 0) })
         }
+        // Alt düğmeler: diğer sitelerde ara, siteye git
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
+            if (e.gid == 0L) addView(label("🔍  Diğer sitelerde ara", 13f, ink, true).apply {
+                gravity = Gravity.CENTER
+                background = rounded(greyBg, 16)
+                setPadding(dp(10), dp(9), dp(10), dp(9))
+                setOnClickListener { searchOtherSites(a) }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f).apply { marginEnd = dp(8) })
+            addView(label("Siteye git ›", 13f, ink, true).apply {
+                gravity = Gravity.CENTER
+                background = rounded(greyBg, 16)
+                setPadding(dp(10), dp(9), dp(10), dp(9))
+                setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (x: Exception) {} }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        })
         results.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { setMargins(dp(2), dp(5), dp(2), dp(5)) })
+    }
+
+    /** Aynı ürünü öbür sitelerde arar; sonuçlarda zile dokununca hepsi tek kartta izlenir */
+    private fun searchOtherSites(a: Alarm) {
+        if (Links.looksLikeUrl(a.title) || a.title.endsWith(" ürünü")) {
+            Toast.makeText(this, "Ürünün adı henüz okunmadı. “Fiyatları yenile”ye dokunup tekrar dene.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val q = a.title.split(Regex("\\s[-|–]\\s")).first().split(" ").filter { it.isNotBlank() }.take(8).joinToString(" ")
+        Toast.makeText(this, "Diğer siteler taranıyor. Aynı ürünü bulunca zile dokun, hepsi tek kartta izlensin.", Toast.LENGTH_LONG).show()
+        input.setText(q); startTest()
     }
 
     /** Listedeki bütün fiyatları şimdi kontrol et */
@@ -3451,13 +3475,7 @@ class MainActivity : Activity(), MatchLogic {
         }
         act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
         // Tek ilan: aynı ürünü diğer sitelerde ara; sonuçlarda zile dokunup bütün sitelerde izlemeye geçilir
-        if (gid == 0L) act(R.drawable.ic_search, "Diğer siteler", false) {
-            val q = a.title.split(Regex("\\s[-|–]\\s")).first().split(" ").take(8).joinToString(" ")
-            if (q.isNotBlank()) {
-                Toast.makeText(this, "Diğer siteler taranıyor. Aynı ürünü bulunca zile dokun, hepsi tek kartta izlensin.", Toast.LENGTH_LONG).show()
-                input.setText(q); startTest()
-            }
-        }
+        if (gid == 0L) act(R.drawable.ic_search, "Diğer siteler", false) { searchOtherSites(a) }
         col.addView(acts)
 
         // Fiyat geçmişi
@@ -4367,16 +4385,70 @@ class MainActivity : Activity(), MatchLogic {
         status.text = "Paylaşılan ürün okunuyor…"
         progress.visibility = View.VISIBLE
         Thread {
+            // Kısa/takip linki (Trendyol adj.st, ty.gl, amzn.eu…) → gerçek ürün sayfası
+            val real = try { Links.resolve(url) } catch (e: Exception) { url }
+            handler.post {
+                if (Links.isProductPage(real)) readShared(real, text)
+                // Olmadıysa linki gizli tarayıcıda açıp gittiği ürün sayfasını yakala
+                else resolveInBrowser(url) { found -> readShared(found ?: real, text) }
+            }
+        }.start()
+    }
+
+    /** Linki görünmez bir tarayıcıda açar; ürün sayfasına (ya da uygulama linkine) ulaşınca adresi verir */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun resolveInBrowser(url: String, done: (String?) -> Unit) {
+        var finished = false
+        val wv = WebView(this)
+        fun finish(u: String?) {
+            if (finished) return
+            finished = true
+            handler.post { try { wv.stopLoading(); wv.destroy() } catch (e: Exception) {} }
+            done(u)
+        }
+        fun check(u: String?): Boolean {
+            if (u == null) return false
+            if (Links.isProductPage(u)) { finish(Links.clean(u)); return true }
+            Links.embedded(u)?.let { e -> if (Links.isProductPage(e)) { finish(Links.clean(e)); return true } }
+            return false
+        }
+        wv.settings.javaScriptEnabled = true
+        wv.settings.domStorageEnabled = true
+        wv.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val u = request?.url?.toString() ?: return false
+                if (check(u)) return true
+                // Uygulama/mağaza linklerine gitme (ty://, intent://, market://)
+                return !u.startsWith("http")
+            }
+            override fun onPageFinished(view: WebView?, u: String?) { check(u) }
+        }
+        handler.postDelayed({ finish(null) }, 12_000)
+        try { wv.loadUrl(url) } catch (e: Exception) { finish(null) }
+    }
+
+    /** Ürün sayfasını okuyup "Listeye ekle" penceresini açar */
+    private fun readShared(url: String, text: String) {
+        Thread {
             val info = try { Alarms.fetch(url) } catch (e: Exception) { null }
             handler.post {
                 progress.visibility = View.GONE
                 status.text = ""
-                val finalUrl = info?.finalUrl ?: url
+                status.visibility = View.GONE
+                val finalUrl = Links.clean(info?.finalUrl?.takeIf { Links.isProductPage(it) } ?: url)
+                if (!Links.isProductPage(finalUrl) && info?.price == null) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Bu linki okuyamadım")
+                        .setMessage("Link bir ürün sayfasına gitmiyor. Ürünü sitenin kendisinde (tarayıcıda) açıp linkini kopyalayıp “Link yapıştır”a dokunmayı dene.")
+                        .setPositiveButton("Tamam", null).show()
+                    return@post
+                }
                 val host = Uri.parse(finalUrl).host.orEmpty()
                 val site = sites.firstOrNull { host.contains(it.name.lowercase(Locale.ROOT)) }?.name
                     ?: host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
                 // Ürün adı: sayfa başlığı (site adı ve "Fiyatı" gibi ekler atılır); yoksa paylaşılan yazı
-                val rawTitle = info?.title?.takeIf { it.isNotBlank() } ?: text.replace(url, "").trim()
+                val rawTitle = info?.title?.takeIf { !Links.looksLikeUrl(it) }
+                    ?: Regex("https?://\\S+").replace(text, "").trim().takeIf { !Links.looksLikeUrl(it) } ?: "$site ürünü"
                 val name = rawTitle.split(Regex("\\s[-|–]\\s")).first()
                     .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al|ve)\\b"), " ")
                     .replace(Regex("\\s+"), " ").trim()

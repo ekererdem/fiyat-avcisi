@@ -1727,6 +1727,63 @@ class MainActivity : Activity(), MatchLogic {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
     }
 
+    /** Sade arama sonucu: sadece aranan markayı ve kelimelerin çoğunu taşıyan ilanlar (muadil, aksesuar yok) */
+    private var showAllResults = false
+    private val stopWords = setOf("in", "ve", "ile", "icin", "li", "lu", "lı", "lü", "adet", "arada", "the", "for", "set")
+
+    private fun simpleResults(): List<Offer> {
+        val q = (identity?.label ?: query)
+        val qw = words(q).filter { it !in stopWords }
+        if (qw.isEmpty()) return emptyList()
+        val brand = qw.first()
+        val bad = setOf(Kind.ACCESSORY, Kind.USED, Kind.MUADIL, Kind.DIFFERENT_MODEL)
+        return offers.asSequence()
+            .filter { it.kind !in bad && it.price > 0 }
+            .map { it to words(it.title) }
+            .filter { (o, w) -> o.kind == Kind.MATCH || (brand in w && qw.count { it in w } * 10 >= qw.size * 6) }
+            .map { it.first }
+            .distinctBy { offerKey(it) }
+            .sortedWith(compareBy<Offer> { if (it.kind == Kind.MATCH) 0 else 1 }.thenBy { it.price })
+            .toList()
+    }
+
+    private fun renderSimple(final: Boolean, matches: List<Offer>) {
+        filterBar.visibility = View.GONE
+        val list = simpleResults()
+        val took = elapsedText((if (finished && finishedAt > 0) finishedAt else android.os.SystemClock.elapsedRealtime()) - startedAt)
+        status.text = when {
+            !final -> "Siteler taranıyor… " + (if (list.isNotEmpty()) "${list.size} ilan, en ucuz ${money(list.minOf { it.price })}" else "") + " · $took"
+            list.isEmpty() -> "Bulunamadı · $took"
+            else -> "${list.size} ilan · ${list.map { it.site }.distinct().size} site · $took"
+        }
+        if (final && list.isEmpty()) {
+            val brand = words(identity?.label ?: query).firstOrNull { it !in stopWords }.orEmpty()
+            results.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = rounded(surface, 18, line)
+                setPadding(dp(18), dp(22), dp(18), dp(20))
+                addView(label("Bu ürün sitelerde bulunamadı", 17f, ink, true).apply { gravity = Gravity.CENTER })
+                addView(label("Taranan sitelerde “${brand.uppercase(Locale("tr", "TR"))}” markalı ve adı uyan bir ilan yok. " +
+                    "Ürün tek bir sitede satılıyor olabilir ya da adı farklı yazılmıştır; daha kısa yazıp tekrar dene.", 13f, muted)
+                    .apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(12)) })
+                addView(label("Benzer ürünleri yine de göster", 13f, gold, true).apply {
+                    setPadding(dp(8), dp(6), dp(8), dp(4))
+                    setOnClickListener { showAllResults = true; render(final = finished) }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            return
+        }
+        list.forEachIndexed { i, o -> offerRow(o, i == 0 && final) }
+        if (final) results.addView(label("Benzer ve muadil ürünleri de göster", 13f, muted, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(20), dp(12), dp(8))
+            setOnClickListener { showAllResults = true; render(final = finished) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun restoreScroll(y: Int) { resultsScroll.post { resultsScroll.scrollTo(0, y) } }
+
     /** Listedeki ürünü seçilen ilanlarla tek grup yapar (hedef ve bildirim ayarı korunur) */
     private fun addPicked(a: Alarm, chosen: List<Offer>) {
         val gid = if (a.groupId != 0L) a.groupId else System.currentTimeMillis()
@@ -2132,6 +2189,7 @@ class MainActivity : Activity(), MatchLogic {
         if (running) return
         pickFor = pendingPick
         pendingPick = null
+        showAllResults = false
         userInput = input.text.toString().trim()
         if (userInput.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
@@ -3012,6 +3070,8 @@ class MainActivity : Activity(), MatchLogic {
         val matches = offers.filter { it.kind == Kind.MATCH }.sortedBy { it.price }
         val others = offers.filter { it.kind != Kind.MATCH }.sortedBy { it.price }
         markUnitPrices(matches)
+
+        if (!showAllResults) { renderSimple(final, matches); restoreScroll(y); return }
 
         val took = elapsedText((if (finished && finishedAt > 0) finishedAt else android.os.SystemClock.elapsedRealtime()) - startedAt)
         if (final) {

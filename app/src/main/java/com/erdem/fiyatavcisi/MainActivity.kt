@@ -155,7 +155,7 @@ class MainActivity : Activity(), MatchLogic {
             field = v
             updateNav()
             // Ana sayfada üstteki arama kutusu gizli: ortadaki barkod kartı ve arama kutusu kullanılır
-            if (::searchBar.isInitialized) searchBar.visibility = if (v == "home") View.GONE else View.VISIBLE
+            if (::searchBar.isInitialized) searchBar.visibility = if (v == "results" || v == "product") View.VISIBLE else View.GONE
         }
     private lateinit var searchBar: LinearLayout
     private var homeInput: EditText? = null
@@ -166,8 +166,13 @@ class MainActivity : Activity(), MatchLogic {
 
     private fun updateNav() {
         if (!::navBar.isInitialized) return
+        val cur = when (screen) {
+            "alarms", "watch", "item" -> "home"
+            "results", "product" -> "search"
+            else -> screen
+        }
         for ((key, icon, text) in navItems) {
-            val on = key == screen
+            val on = key == cur
             val col = if (on) gold else muted
             icon.imageTintList = android.content.res.ColorStateList.valueOf(col)
             text.setTextColor(col)
@@ -205,9 +210,8 @@ class MainActivity : Activity(), MatchLogic {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             navItems.add(Triple(key, iv, tv))
         }
-        item("home", R.drawable.ic_home, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
-        item("watch", R.drawable.ic_watch, "Takip") { showAlarms("watch") }
-        item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms("alarms") }
+        item("home", R.drawable.ic_home, "Listem") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
+        item("search", R.drawable.ic_search, "Ara") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome(search = true) }
         item("settings", R.drawable.ic_gear, "Ayarlar") { showSettings() }
         updateNav()
         updateGearDot()
@@ -845,13 +849,14 @@ class MainActivity : Activity(), MatchLogic {
                     render(final = finished)
                 } else showHome()
             }
-            screen == "results" -> goHome()
+            screen == "results" -> goHome(search = true)
+            screen == "search" -> goHome()
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
 
-    /** Sonuçları kapatıp ana sayfaya dön */
-    private fun goHome() {
+    /** Sonuçları kapatıp listeye (ya da arama ekranına) dön */
+    private fun goHome(search: Boolean = false) {
         // Arama sürüyorsa durdur: ana sayfada site çipleri ve "taranıyor" yazısı kalmasın
         if (running) { stopAll(); running = false }
         progress.visibility = View.GONE
@@ -859,7 +864,7 @@ class MainActivity : Activity(), MatchLogic {
         chipsScroll.visibility = View.GONE
         status.visibility = View.GONE
         offers.clear()
-        showHome()
+        if (search) showSearch() else showHome()
         resultsScroll.post { resultsScroll.scrollTo(0, 0) }
     }
 
@@ -1226,34 +1231,15 @@ class MainActivity : Activity(), MatchLogic {
         }
     }
 
-    /** Açılış ekranı: kısa açıklama, son aramalar */
-    private fun showHome() {
+    /** Ara ekranı: barkod kartı, arama kutusu, son aramalar */
+    private fun showSearch() {
         if (running) return
-        screen = "home"
+        screen = "search"
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        status.visibility = View.GONE
+        progress.visibility = View.GONE
         results.removeAllViews()
-        // Yeni sürüm bildirimi
-        Update.pending(this)?.let { newName ->
-            val info = label("Yeni sürüm: $newName · şu anki ${Update.currentName(this)}", 12f, ink)
-            results.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                background = rounded(amberBg, 18)
-                setPadding(dp(16), dp(12), dp(12), dp(12))
-                addView(LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(label("Güncelleme var", 15f, ink, true))
-                    addView(info)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(label("Güncelle", 14f, accentOn, true).apply {
-                    background = rounded(gold, 18)
-                    setPadding(dp(16), dp(9), dp(16), dp(9))
-                    setOnClickListener { startUpdate(info) }
-                })
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(8) })
-        }
-
         homeHero()
 
         val recent = recentSearches()
@@ -1283,7 +1269,7 @@ class MainActivity : Activity(), MatchLogic {
             setOnClickListener {
                 prefs.edit().remove("recent").apply()
                 Toast.makeText(this@MainActivity, "Arama geçmişi temizlendi", Toast.LENGTH_SHORT).show()
-                showHome()
+                showSearch()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
@@ -1359,83 +1345,246 @@ class MainActivity : Activity(), MatchLogic {
         results.addView(wrap)
     }
 
-    /** Ana sayfa: iki sütun — solda Alarmlar, sağda Takip; her birinde en fazla 3 ürün kutucuğu */
-    private fun homeTracking() {
-        val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
-        data class Entry(val gid: Long, val focus: Alarm, val title: String, val price: String, val down: Boolean, val sub: String)
-        fun entries(watch: Boolean): List<Entry> {
-            val list = all.filter { it.watch == watch }
-            val out = mutableListOf<Entry>()
-            for ((gid, items) in list.filter { it.groupId != 0L }.groupBy { it.groupId }) {
-                val best = Alarms.groupBest(items) ?: items.first()
-                val unit = best.unitAmount > 0
-                val m = Alarms.metric(best)
-                out.add(Entry(gid, best, best.groupName.ifEmpty { best.title },
-                    m?.let { if (unit) Alarms.unitText(it, best.unitName) else money(it) } ?: "?", false, "${items.size} site · ${best.site}"))
-            }
-            for (a in list.filter { it.groupId == 0L }.sortedByDescending { it.id })
-                out.add(Entry(0L, a, a.title, if (a.lastPrice > 0) money(a.lastPrice) else "?", a.lastPrice > 0 && a.lastPrice < a.startPrice, a.site))
-            return out
-        }
-        val alarms = entries(false)
-        val watches = entries(true)
+    // ---------- Listem (ana sayfa) ----------
 
-        val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(14), 0, 0) }
-        fun column(title: String, icon: Int, mode: String, list: List<Entry>, empty: String): LinearLayout {
-            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            // Sütun başlığı: simge, ad, sayı
-            col.addView(LinearLayout(this).apply {
+    /** Listedeki bir ürün: tek ilan ya da birçok sitede aynı ürün (grup) */
+    private data class WishEntry(
+        val gid: Long, val focus: Alarm, val items: List<Alarm>, val title: String,
+        val price: Double?, val priceText: String, val target: Double, val targetText: String?,
+        val start: Double, val lowest: Double, val watch: Boolean, val sub: String, val history: List<Pair<Long, Double>>,
+    ) {
+        val hit get() = target > 0 && price != null && price <= target
+        val drop get() = if (price != null && start > 0 && price < start) (start - price) / start else 0.0
+    }
+
+    private fun wishEntries(all: List<Alarm>): List<WishEntry> {
+        val out = mutableListOf<WishEntry>()
+        for ((gid, items) in all.filter { it.groupId != 0L }.groupBy { it.groupId }) {
+            val best = Alarms.groupBest(items) ?: items.first()
+            val unit = best.unitTarget > 0 || best.unitAmount > 0
+            val p = Alarms.metric(best)
+            val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
+            val t = if (best.unitTarget > 0) best.unitTarget else best.target
+            val hist = History.get(this, "g:$gid")
+            out.add(WishEntry(gid, best, items, best.groupName.ifEmpty { best.title }, p, p?.let(fmt) ?: "?",
+                t, if (t > 0) fmt(t) else null, hist.firstOrNull()?.second ?: 0.0, hist.minOfOrNull { it.second } ?: 0.0,
+                best.watch, "${items.size} site · en uygun ${best.site}", hist))
+        }
+        for (a in all.filter { it.groupId == 0L }) {
+            val byUnit = a.unitTarget > 0
+            val p = if (byUnit) a.unitPrice() else a.lastPrice.takeIf { it > 0 }
+            val fmt = { v: Double -> if (byUnit) Alarms.unitText(v, a.unitName) else money(v) }
+            val t = if (byUnit) a.unitTarget else a.target
+            out.add(WishEntry(0L, a, listOf(a), a.title, p, p?.let(fmt) ?: "?", t, if (t > 0) fmt(t) else null,
+                if (byUnit) 0.0 else a.startPrice, if (byUnit) 0.0 else a.lowest, a.watch,
+                a.site + if (a.inStock == false) " · stokta yok" else "", History.offer(this, a.link)))
+        }
+        // Hedefe inenler en üstte, sonra en çok ucuzlayanlar, sonra en yeniler
+        return out.sortedWith(compareByDescending<WishEntry> { it.hit }.thenByDescending { it.drop }.thenByDescending { it.focus.id })
+    }
+
+    @Volatile private var homeChecking = false
+
+    /** Listem: takip edilen bütün ürünler; hedefe inenler üstte */
+    private fun showHome() {
+        if (running) return
+        screen = "home"
+        filterBar.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        status.visibility = View.GONE
+        progress.visibility = if (homeChecking) View.VISIBLE else View.GONE
+        results.removeAllViews()
+        // Yeni sürüm bildirimi
+        Update.pending(this)?.let { newName ->
+            val info = label("Yeni sürüm: $newName · şu anki ${Update.currentName(this)}", 12f, ink)
+            results.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(2), 0, dp(2), dp(10))
-                setOnClickListener { showAlarms(mode) }
-                addView(FrameLayout(this@MainActivity).apply {
-                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (mode == "alarms") amberBg else greenBg) }
-                    addView(ImageView(this@MainActivity).apply {
-                        setImageResource(icon)
-                        imageTintList = android.content.res.ColorStateList.valueOf(if (mode == "alarms") brand else green)
-                    }, FrameLayout.LayoutParams(dp(16), dp(16)).apply { gravity = Gravity.CENTER })
-                }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(8) })
-                addView(label(title, 16f, ink, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (list.isNotEmpty()) addView(label("${list.size} ›", 13f, muted, true))
-            })
-            if (list.isEmpty()) {
-                col.addView(label(empty, 12f, muted).apply {
-                    background = rounded(surface, 16, line)
-                    setPadding(dp(12), dp(14), dp(12), dp(14))
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
-            list.take(3).forEach { e ->
-                col.addView(LinearLayout(this).apply {
+                background = rounded(amberBg, 18)
+                setPadding(dp(16), dp(12), dp(12), dp(12))
+                addView(LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    background = rounded(surface, 16, line)
-                    setPadding(dp(10), dp(10), dp(10), dp(12))
-                    setOnClickListener { itemBack = "home"; alarmPage(e.gid, e.focus.id) }
-                    addView(ImageView(this@MainActivity).apply {
-                        background = rounded(Color.WHITE, 12)
-                        setPadding(dp(6), dp(6), dp(6), dp(6))
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                        if (e.focus.image.isNotEmpty()) loadImage(e.focus.image, this, Uri.parse(e.focus.link).let { u -> "${u.scheme}://${u.host}/" })
-                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(92)))
-                    addView(label(e.title, 13f, ink, true).apply {
-                        maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(8), 0, 0); minLines = 2
-                    })
-                    addView(label(e.price, 15f, if (e.down || e.gid != 0L) green else ink, true).apply { setPadding(0, dp(6), 0, 0) })
-                    addView(label(e.sub, 11f, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
-            }
-            if (list.size > 3) col.addView(label("Tümünü gör", 13f, gold, true).apply {
-                gravity = Gravity.CENTER
-                setPadding(0, dp(4), 0, dp(4))
-                setOnClickListener { showAlarms(mode) }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            return col
+                    addView(label("Güncelleme var", 15f, ink, true))
+                    addView(info)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label("Güncelle", 14f, accentOn, true).apply {
+                    background = rounded(gold, 18)
+                    setPadding(dp(16), dp(9), dp(16), dp(9))
+                    setOnClickListener { startUpdate(info) }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
-        cols.addView(column("Alarmlar", R.drawable.ic_bell, "alarms", alarms, "Fiyat düşünce haber almak için bir ürüne alarm kur."),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-        cols.addView(column("Takip", R.drawable.ic_watch, "watch", watches, "Bildirimsiz izlemek istediğin ürünleri takibe al."),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6) })
-        results.addView(cols)
+
+        val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
+        val list = wishEntries(all)
+        val hits = list.count { it.hit }
+        val newest = all.maxOfOrNull { it.lastCheck } ?: 0L
+
+        // Başlık
+        results.addView(label("Listem", 26f, ink, true).apply {
+            typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
+            setPadding(dp(4), dp(16), dp(4), 0)
+        })
+        val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
+        results.addView(label(when {
+            list.isEmpty() -> "Almak istediğin ürünleri ekle, fiyatı düşünce haber vereyim."
+            else -> "${list.size} ürün" + (if (hits > 0) " · $hits tanesi hedefte 🎯" else "") +
+                (if (homeChecking) " · fiyatlar kontrol ediliyor…" else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
+        }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)) })
+
+        // Düğmeler: link yapıştır, yenile
+        val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(2), 0, dp(2), dp(10)) }
+        btns.addView(label("+  Link yapıştır", 14f, accentOn, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(gold, 22)
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            setOnClickListener { pasteLink() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        if (list.isNotEmpty()) btns.addView(label(if (homeChecking) "Bakılıyor…" else "↻  Fiyatları yenile", 14f, ink, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(surface, 22, line)
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            setOnClickListener { refreshList() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        else btns.addView(label("Ürün ara", 14f, ink, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(surface, 22, line)
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            setOnClickListener { goHome(search = true) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        results.addView(btns)
+
+        if (list.isEmpty()) {
+            results.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 20, line)
+                setPadding(dp(18), dp(20), dp(18), dp(20))
+                addView(label("Nasıl eklenir?", 16f, ink, true).apply { setPadding(0, 0, 0, dp(10)) })
+                listOf(
+                    "Trendyol, Hepsiburada, Amazon gibi bir uygulamada ürünü aç",
+                    "Paylaş'a dokun, listeden İzci'yi seç",
+                    "İstersen hedef fiyat yaz, Ekle'ye bas. Fiyat düşünce bildirim gelir",
+                ).forEachIndexed { i, t ->
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dp(6), 0, dp(6))
+                        addView(label("${i + 1}", 13f, accentOn, true).apply {
+                            gravity = Gravity.CENTER
+                            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+                        }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(12) })
+                        addView(label(t, 14f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    })
+                }
+                addView(label("Ya da linki kopyala, yukarıdaki “Link yapıştır”a dokun.", 12f, muted).apply { setPadding(0, dp(10), 0, 0) })
+            })
+            return
+        }
+
+        list.forEach { wishCard(it) }
+        results.addView(label("İpucu: Bir ürünü birden çok sitede izlemek için ürün sayfasında “Diğer siteler”e dokun.", 12f, muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(4))
+        })
+
+        // Fiyatlar 2 saatten eskiyse sayfa açılınca sessizce yenilenir
+        if (!homeChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) refreshList()
+    }
+
+    /** Bir ürün kartı: fotoğraf, ad, güncel fiyat, düşüş, hedef durumu, küçük grafik */
+    private fun wishCard(e: WishEntry) {
+        val a = e.focus
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(if (e.hit) greenBg else surface, 18, if (e.hit) gold else line, if (e.hit) 2 else 1)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { itemBack = "home"; alarmPage(e.gid, a.id) }
+        }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(ImageView(this).apply {
+            background = rounded(Color.WHITE, 12)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+        }, LinearLayout.LayoutParams(dp(76), dp(76)).apply { marginEnd = dp(12) })
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        info.addView(label(e.title, 14f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+        info.addView(label(e.sub, 12f, if (a.inStock == false && e.gid == 0L) red else muted).apply {
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0)
+        })
+        val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
+        priceRow.addView(label(e.priceText, 19f, if (e.hit || e.drop > 0) green else ink, true))
+        if (e.drop >= 0.01) priceRow.addView(pill("↓ %${Math.round(e.drop * 100)}", green, if (e.hit) surface else greenBg, bold = true).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) }
+        })
+        if (e.watch) priceRow.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_bell_off)
+            imageTintList = android.content.res.ColorStateList.valueOf(muted)
+            contentDescription = "Bildirim kapalı"
+        }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(8) })
+        info.addView(priceRow)
+        row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(row)
+
+        // Hedef durumu
+        val p = e.price
+        val statusText: String
+        val statusColor: Int
+        when {
+            e.watch -> { statusText = "Sadece izleniyor · bildirim yok"; statusColor = muted }
+            e.hit -> { statusText = "Hedefin ${e.targetText} · fiyat hedefte, alma zamanı! 🎯"; statusColor = green }
+            e.target > 0 && p != null -> {
+                val left = p - e.target
+                val fmtLeft = if (a.unitTarget > 0) Alarms.unitText(left, a.unitName) else money(left)
+                statusText = "Hedef ${e.targetText} · $fmtLeft kaldı"; statusColor = ink
+            }
+            else -> { statusText = "Her ucuzlamada haber verilecek"; statusColor = muted }
+        }
+        card.addView(label(statusText, 13f, statusColor, e.hit).apply { setPadding(dp(2), dp(10), dp(2), 0) })
+        // Hedefe ilerleme çubuğu: eklendiği fiyattan hedefe ne kadar yol alındı
+        if (!e.watch && !e.hit && e.target > 0 && p != null && e.start > e.target) {
+            val f = ((e.start - p) / (e.start - e.target)).coerceIn(0.0, 1.0).toFloat()
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = rounded(greyBg, 4)
+                addView(View(this@MainActivity).apply { background = rounded(gold, 4) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, f.coerceAtLeast(0.02f)))
+                addView(View(this@MainActivity), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f - f.coerceAtLeast(0.02f)))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply { setMargins(dp(2), dp(8), dp(2), 0) })
+        }
+        // Küçük fiyat grafiği
+        if (e.history.size >= 2) {
+            card.addView(Sparkline(this, e.history, green, line), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(8) })
+            if (e.lowest > 0) card.addView(label("En düşük ${if (a.unitTarget > 0) Alarms.unitText(e.lowest, a.unitName) else money(e.lowest)} · ${e.history.size} gündür izleniyor", 11f, muted)
+                .apply { setPadding(dp(2), dp(2), dp(2), 0) })
+        }
+        results.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { setMargins(dp(2), dp(5), dp(2), dp(5)) })
+    }
+
+    /** Listedeki bütün fiyatları şimdi kontrol et */
+    private fun refreshList() {
+        if (homeChecking) return
+        homeChecking = true
+        if (screen == "home") showHome()
+        Thread {
+            try { Alarms.checkAll(applicationContext) } catch (e: Exception) {}
+            handler.post {
+                homeChecking = false
+                if (screen == "home" && !running) showHome()
+            }
+        }.start()
+    }
+
+    /** Panodaki linki listeye ekler */
+    private fun pasteLink() {
+        val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = try { cb.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty() } catch (e: Exception) { "" }
+        if (Regex("https?://\\S+").find(text) == null) {
+            Toast.makeText(this, "Panoda ürün linki yok. Önce sitede ürün linkini kopyala.", Toast.LENGTH_LONG).show()
+            return
+        }
+        handleSharedText(text)
     }
 
     /** Ürün sayısı: bir ürün alarmının bütün siteleri tek ürün sayılır */
@@ -3187,7 +3336,7 @@ class MainActivity : Activity(), MatchLogic {
     private var resultsScrollY = 0
 
     private fun backToResults() {
-        if (offers.isEmpty()) { goHome(); return }
+        if (offers.isEmpty()) { goHome(search = true); return }
         filterBar.visibility = View.VISIBLE
         status.visibility = View.VISIBLE
         chipsScroll.visibility = if (running) View.VISIBLE else View.GONE
@@ -3211,7 +3360,7 @@ class MainActivity : Activity(), MatchLogic {
         results.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(16)) }
         results.addView(col)
-        col.addView(label(if (itemBack == "home") "‹  Ana sayfa" else if (a.watch) "‹  Takip listem" else "‹  Alarmlarım", 14f, gold, true).apply {
+        col.addView(label(if (itemBack == "home") "‹  Listem" else if (a.watch) "‹  Takip listem" else "‹  Alarmlarım", 14f, gold, true).apply {
             setPadding(0, dp(6), 0, dp(10))
             setOnClickListener { itemGoBack() }
         })
@@ -3301,6 +3450,14 @@ class MainActivity : Activity(), MatchLogic {
                 .setNegativeButton("Vazgeç", null).show()
         }
         act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
+        // Tek ilan: aynı ürünü diğer sitelerde ara; sonuçlarda zile dokunup bütün sitelerde izlemeye geçilir
+        if (gid == 0L) act(R.drawable.ic_search, "Diğer siteler", false) {
+            val q = a.title.split(Regex("\\s[-|–]\\s")).first().split(" ").take(8).joinToString(" ")
+            if (q.isNotBlank()) {
+                Toast.makeText(this, "Diğer siteler taranıyor. Aynı ürünü bulunca zile dokun, hepsi tek kartta izlensin.", Toast.LENGTH_LONG).show()
+                input.setText(q); startTest()
+            }
+        }
         col.addView(acts)
 
         // Fiyat geçmişi
@@ -3826,7 +3983,7 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?,
-                            offer: Offer? = null, replaceGroup: Long = 0L) {
+                            offer: Offer? = null, replaceGroup: Long = 0L, compareName: String? = null) {
         val unit = offer?.let { offerUnit(it) }
         val group = offer?.let { groupCandidates(it) }.orEmpty()
         val box = LinearLayout(this).apply {
@@ -3842,7 +3999,8 @@ class MainActivity : Activity(), MatchLogic {
                 13f, green, true).apply { setPadding(0, dp(6), 0, 0) })
         }
         box.addView(label(
-            (if (price != null) "Dokunduğun ilan: ${money(price)} · $site" else "Şu an fiyat okunamadı · $site") +
+            (if (price != null) (if (compareName != null) "Şu an ${money(price)} · $site" else "Dokunduğun ilan: ${money(price)} · $site")
+             else "Şu an fiyat okunamadı · $site") +
                 (if (unit != null && price != null) " · ${Alarms.unitText(price / unit.first, unit.second)}" else "") +
                 if (available == false) " · stokta yok" else "",
             13f, muted, true
@@ -3889,7 +4047,7 @@ class MainActivity : Activity(), MatchLogic {
         }
         box.addView(stock)
         val watchOnly = android.widget.CheckBox(this).apply {
-            text = "Sadece takip et (bildirim gönderme)"
+            text = "Bildirim gönderme, sadece fiyatı izle"
             setTextColor(ink)
             isChecked = alarmView == "watch" && screen == "watch"
         }
@@ -3898,9 +4056,9 @@ class MainActivity : Activity(), MatchLogic {
             .apply { setPadding(0, dp(6), 0, 0) })
         val existing = Alarms.load(this).firstOrNull { it.link.substringBefore('?') == link.substringBefore('?') }
         AlertDialog.Builder(this)
-            .setTitle(if (existing != null) "Alarm kurulu — güncelle" else "Fiyat alarmı kur")
+            .setTitle(if (existing != null) "Listende var — güncelle" else "Listeye ekle")
             .setView(box)
-            .setPositiveButton("Kur") { _, _ -> try {
+            .setPositiveButton(if (existing != null) "Kaydet" else "Ekle") { _, _ -> try {
                 if (replaceGroup != 0L) Alarms.removeGroup(this, replaceGroup)
                 val t = target.text.toString().replace(",", ".").toDoubleOrNull() ?: 0.0
                 val byUnit = unit != null && modeGroup.checkedRadioButtonId == mUnit.id
@@ -3921,7 +4079,7 @@ class MainActivity : Activity(), MatchLogic {
                         )
                     }
                     Alarms.addGroup(this, items)
-                    Toast.makeText(this, (if (watchOnly.isChecked) "Takibe alındı: " else "Ürün alarmı kuruldu: ") + "${items.size} sitede takip", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Listene eklendi: ${items.size} sitede izleniyor", Toast.LENGTH_SHORT).show()
                 } else {
                     val p = price ?: 0.0
                     Alarms.add(this, Alarm(
@@ -3932,20 +4090,24 @@ class MainActivity : Activity(), MatchLogic {
                         unitAmount = if (unit != null) unit.first else 0.0, unitName = unit?.second.orEmpty(),
                         unitTarget = if (byUnit) t else 0.0, watch = watchOnly.isChecked,
                     ))
-                    Toast.makeText(this, if (watchOnly.isChecked) "Takibe alındı" else "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, if (existing != null) "Güncellendi" else "Listene eklendi", Toast.LENGTH_SHORT).show()
                 }
                 if (!watchOnly.isChecked) askNotificationPermission()
-                if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
+                if (compareName != null && !running) goHome()
+                else if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
             } catch (e: Exception) {
                 AlertDialog.Builder(this).setTitle("Alarm kurulamadı")
                     .setMessage(e.javaClass.simpleName + ": " + (e.message ?: ""))
                     .setNegativeButton("Kapat", null).show()
             } }
             .apply {
-                if (existing != null) setNeutralButton("Alarmı sil") { _, _ ->
+                if (existing != null) setNeutralButton("Listeden çıkar") { _, _ ->
                     if (existing.groupId != 0L) Alarms.removeGroup(this@MainActivity, existing.groupId)
                     else Alarms.remove(this@MainActivity, existing.id)
-                    if (offers.isNotEmpty() && !running) render(final = finished)
+                    if (compareName != null && !running) goHome()
+                    else if (offers.isNotEmpty() && !running) render(final = finished)
+                } else if (!compareName.isNullOrBlank()) setNeutralButton("Karşılaştır") { _, _ ->
+                    input.setText(compareName); startTest()
                 }
             }
             .setNegativeButton("Vazgeç", null)
@@ -4025,7 +4187,7 @@ class MainActivity : Activity(), MatchLogic {
                 addView(label("Ürün ara", 14f, accentOn, true).apply {
                     background = rounded(gold, 22)
                     setPadding(dp(22), dp(11), dp(22), dp(11))
-                    setOnClickListener { goHome() }
+                    setOnClickListener { goHome(search = true) }
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
             return
@@ -4218,19 +4380,8 @@ class MainActivity : Activity(), MatchLogic {
                 val name = rawTitle.split(Regex("\\s[-|–]\\s")).first()
                     .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al|ve)\\b"), " ")
                     .replace(Regex("\\s+"), " ").trim()
-                val searchName = name.split(" ").take(8).joinToString(" ")
-                AlertDialog.Builder(this)
-                    .setTitle(name.take(90).ifEmpty { "Paylaşılan ürün" })
-                    .setMessage((info?.price?.let { "Şu an ${money(it)} · $site" } ?: "Fiyat okunamadı · $site") +
-                        (if (info?.inStock == false) " · stokta yok" else ""))
-                    .setPositiveButton("Fiyatları karşılaştır") { _, _ ->
-                        if (searchName.isNotBlank()) { input.setText(searchName); startTest() }
-                    }
-                    .setNeutralButton("Alarm kur") { _, _ ->
-                        alarmDialog(name.ifEmpty { finalUrl }, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock)
-                    }
-                    .setNegativeButton("Vazgeç", null)
-                    .show()
+                alarmDialog(name.ifEmpty { finalUrl }, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock,
+                    compareName = name.split(" ").take(8).joinToString(" "))
             }
         }.start()
     }

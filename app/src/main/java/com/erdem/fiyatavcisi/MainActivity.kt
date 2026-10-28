@@ -167,7 +167,7 @@ class MainActivity : Activity(), MatchLogic {
     private fun updateNav() {
         if (!::navBar.isInitialized) return
         val cur = when (screen) {
-            "alarms", "watch", "item" -> "home"
+            "alarms", "watch", "item", "pick" -> "home"
             "results", "product" -> "search"
             else -> screen
         }
@@ -851,6 +851,7 @@ class MainActivity : Activity(), MatchLogic {
             }
             screen == "results" -> goHome(search = true)
             screen == "search" -> goHome()
+            screen == "pick" -> { pickFor = null; goHome() }
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
@@ -859,6 +860,7 @@ class MainActivity : Activity(), MatchLogic {
     private fun goHome(search: Boolean = false) {
         // Arama sürüyorsa durdur: ana sayfada site çipleri ve "taranıyor" yazısı kalmasın
         if (running) { stopAll(); running = false }
+        pickFor = null
         progress.visibility = View.GONE
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
@@ -1582,8 +1584,164 @@ class MainActivity : Activity(), MatchLogic {
             return
         }
         val q = a.title.split(Regex("\\s[-|–]\\s")).first().split(" ").filter { it.isNotBlank() }.take(8).joinToString(" ")
-        Toast.makeText(this, "Diğer siteler taranıyor. Aynı ürünü bulunca zile dokun, hepsi tek kartta izlensin.", Toast.LENGTH_LONG).show()
+        pendingPick = a
+        picked.clear()
         input.setText(q); startTest()
+    }
+
+    // ---------- Diğer sitelerde aynı ürün: sade seçim ekranı ----------
+
+    /** "Diğer sitelerde ara" ile başlatılan aramanın listedeki ürünü (null = normal arama) */
+    private var pickFor: Alarm? = null
+    private var pendingPick: Alarm? = null
+    private val picked = mutableSetOf<String>()
+
+    /** Kelime kökleri: küçük harf, Türkçe karakter sade, 2+ harf */
+    private fun words(t: String) = t.lowercase(Locale("tr", "TR"))
+        .replace('ı', 'i').replace('ş', 's').replace('ğ', 'g').replace('ü', 'u').replace('ö', 'o').replace('ç', 'c')
+        .split(Regex("[^a-z0-9]+")).filter { it.length >= 2 }.toSet()
+
+    /** Aday: başka sitede, adı listedeki ürüne benzeyen ilan. Aksesuar, ikinci el, başka model atılır. */
+    private fun pickCandidates(a: Alarm): List<Offer> {
+        val base = words(a.title)
+        val brand = brandOf(a.title).lowercase(Locale("tr", "TR"))
+        val ok = setOf(Kind.MATCH, Kind.POSSIBLE, Kind.OTHER_PACKAGE, Kind.OTHER, Kind.SUSPICIOUS)
+        return offers.asSequence()
+            .filter { it.kind in ok && it.site != a.site && it.price > 0 }
+            .filter { brand.isEmpty() || it.title.lowercase(Locale("tr", "TR")).contains(brand) }
+            .map { o -> o to (words(o.title) intersect base).size.toDouble() / base.size.coerceAtLeast(1) }
+            .filter { (o, sim) -> o.kind == Kind.MATCH || sim >= 0.45 }
+            .sortedWith(compareBy<Pair<Offer, Double>> { if (it.first.kind == Kind.MATCH) 0 else 1 }.thenByDescending { it.second }.thenBy { it.first.price })
+            .map { it.first }
+            .distinctBy { offerKey(it) }
+            .take(10).toList()
+    }
+
+    private fun renderPicker(final: Boolean) {
+        val a = pickFor ?: return
+        screen = "pick"
+        filterBar.visibility = View.GONE
+        status.visibility = View.GONE
+        searchBar.visibility = View.GONE
+        updateSiteChips()
+        results.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(16)) }
+        results.addView(col)
+        col.addView(label("‹  Listem", 14f, gold, true).apply {
+            setPadding(0, dp(6), 0, dp(10))
+            setOnClickListener { pickFor = null; goHome() }
+        })
+        col.addView(label("Diğer sitelerde aynı ürün", 22f, ink, true))
+        // Listedeki ürün
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(surface, 14, line)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            addView(ImageView(this@MainActivity).apply {
+                background = rounded(Color.WHITE, 8)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+            }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(10) })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(a.title, 13f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+                addView(label("${a.site} · ${if (a.lastPrice > 0) money(a.lastPrice) else "?"}", 12f, muted))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+
+        val cands = pickCandidates(a)
+        if (!final) {
+            col.addView(label("Siteler taranıyor… " + (if (cands.isNotEmpty()) "${cands.size} aday bulundu" else ""), 14f, muted).apply { setPadding(0, dp(16), 0, dp(6)) })
+        }
+        if (final && cands.isEmpty()) {
+            col.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = rounded(surface, 18, line)
+                setPadding(dp(18), dp(22), dp(18), dp(20))
+                addView(label("Başka sitede bulunamadı", 17f, ink, true).apply { gravity = Gravity.CENTER })
+                addView(label("Bu ürün büyük ihtimalle sadece ${a.site}'da satılıyor. ${a.site} fiyatını izlemeye devam ediyorum.", 13f, muted)
+                    .apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(14)) })
+                addView(label("Listeme dön", 14f, accentOn, true).apply {
+                    background = rounded(gold, 22)
+                    setPadding(dp(22), dp(11), dp(22), dp(11))
+                    setOnClickListener { pickFor = null; goHome() }
+                })
+                addView(label("Benzer ürünleri yine de göster", 13f, muted, true).apply {
+                    setPadding(dp(8), dp(14), dp(8), 0)
+                    setOnClickListener { pickFor = null; render(final = true) }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+            return
+        }
+        if (cands.isEmpty()) return
+        if (final) col.addView(label("Aynı ürün olanları işaretle. Hepsi tek kartta izlenir, en ucuzu öne çıkar.", 13f, muted)
+            .apply { setPadding(0, dp(16), 0, dp(6)) })
+        cands.forEach { o ->
+            val key = offerKey(o)
+            val on = key in picked
+            col.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                setOnClickListener { if (on) picked.remove(key) else picked.add(key); renderPicker(final) }
+                addView(ImageView(this@MainActivity).apply {
+                    background = rounded(Color.WHITE, 8)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    if (o.image.isNotEmpty()) loadImage(o.image, this, Uri.parse(o.link).let { u -> "${u.scheme}://${u.host}/" })
+                }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(10) })
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(o.title, 13f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(4), 0, 0)
+                        addView(sitePill(o))
+                        addView(label("  " + money(o.price), 14f, if (a.lastPrice > 0 && o.price < a.lastPrice) green else ink, true))
+                    })
+                    if (o.kind == Kind.MATCH) addView(label("büyük ihtimalle aynı ürün", 11f, green))
+                    addView(label("Sayfayı aç ›", 11f, muted).apply {
+                        setPadding(0, dp(4), 0, 0)
+                        setOnClickListener { openLink(o) }
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label(if (on) "✓" else "", 18f, accentOn, true).apply {
+                    gravity = Gravity.CENTER
+                    background = if (on) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+                        else GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), muted) }
+                }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        }
+        if (final) col.addView(label(if (picked.isEmpty()) "Hiçbiri aynı değil" else "Listeme ekle (${picked.size} site daha)", 15f,
+            if (picked.isEmpty()) ink else accentOn, true).apply {
+            gravity = Gravity.CENTER
+            background = if (picked.isEmpty()) rounded(surface, 24, line) else rounded(gold, 24)
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            setOnClickListener {
+                if (picked.isNotEmpty()) addPicked(a, cands.filter { offerKey(it) in picked })
+                pickFor = null; goHome()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+    }
+
+    /** Listedeki ürünü seçilen ilanlarla tek grup yapar (hedef ve bildirim ayarı korunur) */
+    private fun addPicked(a: Alarm, chosen: List<Offer>) {
+        val gid = if (a.groupId != 0L) a.groupId else System.currentTimeMillis()
+        val name = cleanTitle(a.title)
+        val all = Alarms.load(this)
+        val existing = all.filter { if (a.groupId != 0L) it.groupId == a.groupId else it.id == a.id }
+            .map { it.copy(groupId = gid, groupName = it.groupName.ifEmpty { name }) }
+        val t = existing.firstOrNull()?.target ?: a.target
+        val items = existing + chosen.mapIndexed { i, c ->
+            Alarm(id = gid + 1 + i, title = c.title, site = c.site, link = c.link, image = c.image,
+                startPrice = c.price, lastPrice = c.price, lowest = c.price, target = t, wantStock = a.wantStock, inStock = true,
+                lastCheck = 0L, status = "henüz kontrol edilmedi", groupId = gid, groupName = name, watch = a.watch)
+        }
+        Alarms.addGroup(this, items)
+        Toast.makeText(this, "Artık ${items.map { it.site }.distinct().size} sitede izleniyor", Toast.LENGTH_SHORT).show()
     }
 
     /** Listedeki bütün fiyatları şimdi kontrol et */
@@ -1972,6 +2130,8 @@ class MainActivity : Activity(), MatchLogic {
 
     private fun startTest() {
         if (running) return
+        pickFor = pendingPick
+        pendingPick = null
         userInput = input.text.toString().trim()
         if (userInput.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
@@ -2819,6 +2979,7 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private fun render(final: Boolean) {
+        if (pickFor != null) { renderPicker(final); return }
         screen = "results"
         prepareResults()
         updateSiteChips()

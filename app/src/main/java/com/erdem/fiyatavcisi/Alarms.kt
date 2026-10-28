@@ -27,7 +27,7 @@ data class Alarm(
     var site: String,
     var link: String,
     var image: String,
-    val startPrice: Double,
+    var startPrice: Double,
     var lastPrice: Double,
     var lowest: Double,
     var target: Double,          // 0 = her düşüşte haber ver
@@ -257,21 +257,30 @@ object Alarms {
     fun money(v: Double) = "${tl.format(v)} TL"
 
     /** Bütün alarmları kontrol eder; fiyat düştüyse ya da stoğa girdiyse bildirim gönderir */
-    fun checkAll(ctx: Context): Int {
+    /** Düz okumanın yetmediği kayıt: adı/resmi/fiyatı yok ya da son kontrol okunamadı */
+    fun needsBrowser(a: Alarm) = Links.looksLikeUrl(a.title) || a.title.endsWith(" ürünü") || a.image.isEmpty() ||
+        a.lastPrice <= 0 || a.status.startsWith("fiyat okunamadı") || a.status.startsWith("site yanıtı") || a.status.startsWith("kontrol edilemedi")
+
+    /** only: sadece bu kayıtlar · pre: önceden (tarayıcıyla) okunmuş sayfalar */
+    fun checkAll(ctx: Context, only: Set<Long>? = null, pre: Map<Long, PageInfo> = emptyMap()): Int {
         val list = load(ctx)
         var notified = 0
         for (a in list) {
+            if (only != null && a.id !in only) continue
             try {
                 // Kısa/takip linkiyle eklenmiş kayıt: gerçek ürün sayfasına çevir
                 if (!Links.isProductPage(a.link)) {
                     val real = Links.resolve(a.link)
                     if (Links.isProductPage(real)) { a.link = real; a.site = Links.siteName(real) }
                 }
-                val r = fetch(a.link)
+                val r = pre[a.id] ?: fetch(a.link)
+                if (pre[a.id] != null && Links.isProductPage(r.finalUrl)) a.link = Links.clean(r.finalUrl)
                 a.lastCheck = System.currentTimeMillis()
                 if (a.image.isEmpty() && r.image.isNotEmpty()) a.image = r.image
+                // İlk kez fiyat okunduysa başlangıç fiyatı da o olur
+                if (a.startPrice <= 0 && r.price != null) { a.startPrice = r.price; a.lowest = r.price }
                 // Ad yerine link yazılmışsa sayfadaki adı al
-                if (Links.looksLikeUrl(a.title) && !Links.looksLikeUrl(r.title)) {
+                if ((Links.looksLikeUrl(a.title) || a.title.endsWith(" ürünü")) && r.title.isNotBlank() && !Links.looksLikeUrl(r.title)) {
                     a.title = r.title.split(Regex("\\s[-|–]\\s")).first()
                         .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al)\\b"), " ")
                         .replace(Regex("[,\\s]+$"), "").replace(Regex("\\s+"), " ").trim()
@@ -375,7 +384,15 @@ class AlarmJobService : JobService() {
     override fun onStartJob(params: JobParameters?): Boolean {
         Thread {
             try { Alarms.checkAll(applicationContext) } catch (e: Exception) {}
-            jobFinished(params, false)
+            // Düz okumaya sayfa göstermeyen siteler (Trendyol vb.): görünmez tarayıcıyla oku, sonra yeniden değerlendir
+            val todo = try { Alarms.load(applicationContext).filter { Alarms.needsBrowser(it) } } catch (e: Exception) { emptyList() }
+            if (todo.isEmpty()) { jobFinished(params, false); return@Thread }
+            PageReader.readAll(applicationContext, todo) { pre ->
+                Thread {
+                    try { if (pre.isNotEmpty()) Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
+                    jobFinished(params, false)
+                }.start()
+            }
         }.start()
         return true
     }

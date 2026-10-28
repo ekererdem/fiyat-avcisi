@@ -1594,8 +1594,11 @@ class MainActivity : Activity(), MatchLogic {
         Thread {
             try { Alarms.checkAll(applicationContext) } catch (e: Exception) {}
             handler.post {
-                homeChecking = false
                 if (screen == "home" && !running) showHome()
+                repairEntries {
+                    homeChecking = false
+                    if (screen == "home" && !running) showHome()
+                }
             }
         }.start()
     }
@@ -4403,7 +4406,7 @@ class MainActivity : Activity(), MatchLogic {
         fun finish(u: String?) {
             if (finished) return
             finished = true
-            handler.post { try { wv.stopLoading(); wv.destroy() } catch (e: Exception) {} }
+            handler.post { detachHidden(wv) }
             done(u)
         }
         fun check(u: String?): Boolean {
@@ -4414,6 +4417,7 @@ class MainActivity : Activity(), MatchLogic {
         }
         wv.settings.javaScriptEnabled = true
         wv.settings.domStorageEnabled = true
+        attachHidden(wv)
         wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val u = request?.url?.toString() ?: return false
@@ -4427,11 +4431,63 @@ class MainActivity : Activity(), MatchLogic {
         try { wv.loadUrl(url) } catch (e: Exception) { finish(null) }
     }
 
-    /** Ürün sayfasını okuyup "Listeye ekle" penceresini açar */
-    private fun readShared(url: String, text: String) {
+
+    private fun attachHidden(wv: WebView) {
+        try {
+            wv.alpha = 0f
+            (window.decorView as ViewGroup).addView(wv, 0, ViewGroup.LayoutParams(dp(360), dp(640)).also { })
+            wv.translationX = -dp(2000).toFloat()
+        } catch (e: Exception) {}
+    }
+
+    private fun detachHidden(wv: WebView) {
+        try { wv.stopLoading(); (wv.parent as? ViewGroup)?.removeView(wv); wv.destroy() } catch (e: Exception) {}
+    }
+
+    /** Sayfayı görünmez tarayıcıda açıp okur (düz okumaya sayfa göstermeyen siteler için) */
+    private fun readInBrowser(url: String, done: (Alarms.PageInfo?) -> Unit) =
+        PageReader.read(this, url, attach = { attachHidden(it) }, done = done)
+
+    /** Düz okuma eksik kaldıysa tarayıcıyla tamamlar */
+    private fun readProduct(url: String, done: (Alarms.PageInfo?) -> Unit) {
         Thread {
             val info = try { Alarms.fetch(url) } catch (e: Exception) { null }
             handler.post {
+                val good = info != null && info.price != null && info.image.isNotEmpty() && !Links.looksLikeUrl(info.title)
+                if (good) done(info)
+                else readInBrowser(url) { b ->
+                    if (b == null) { done(info); return@readInBrowser }
+                    done(Alarms.PageInfo(b.price ?: info?.price, b.inStock ?: info?.inStock,
+                        b.title.takeIf { !Links.looksLikeUrl(it) } ?: info?.title.orEmpty(),
+                        b.image.ifEmpty { info?.image.orEmpty() },
+                        b.finalUrl.takeIf { Links.isProductPage(it) } ?: info?.finalUrl ?: url,
+                        if ((b.price ?: info?.price) != null) "fiyat okundu" else "fiyat okunamadı"))
+                }
+            }
+        }.start()
+    }
+
+    /** Düz okumayla fiyatı/adı/resmi gelmeyen kayıtları tarayıcıyla okuyup yeniden kontrol eder (bildirimler dahil) */
+    private fun repairEntries(then: () -> Unit) {
+        val ids = Alarms.load(this).filter { Alarms.needsBrowser(it) }
+        PageReader.readAll(this, ids, attach = { attachHidden(it) }) { pre ->
+            if (pre.isEmpty()) { then(); return@readAll }
+            Thread {
+                try { Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
+                handler.post { then() }
+            }.start()
+        }
+    }
+
+    /** "Ürün Adı Fiyatı, Yorumları - Trendyol" → "Ürün Adı" */
+    private fun cleanTitle(t: String) = t.split(Regex("\\s[-|–]\\s")).first()
+        .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al)\\b"), " ")
+        .replace(Regex("[,\\s]+$"), "").replace(Regex("\\s+"), " ").trim()
+
+    /** Ürün sayfasını okuyup "Listeye ekle" penceresini açar */
+    private fun readShared(url: String, text: String) {
+        readProduct(url) { info ->
+            run {
                 progress.visibility = View.GONE
                 status.text = ""
                 status.visibility = View.GONE
@@ -4441,7 +4497,7 @@ class MainActivity : Activity(), MatchLogic {
                         .setTitle("Bu linki okuyamadım")
                         .setMessage("Link bir ürün sayfasına gitmiyor. Ürünü sitenin kendisinde (tarayıcıda) açıp linkini kopyalayıp “Link yapıştır”a dokunmayı dene.")
                         .setPositiveButton("Tamam", null).show()
-                    return@post
+                    return@run
                 }
                 val host = Uri.parse(finalUrl).host.orEmpty()
                 val site = sites.firstOrNull { host.contains(it.name.lowercase(Locale.ROOT)) }?.name
@@ -4449,13 +4505,11 @@ class MainActivity : Activity(), MatchLogic {
                 // Ürün adı: sayfa başlığı (site adı ve "Fiyatı" gibi ekler atılır); yoksa paylaşılan yazı
                 val rawTitle = info?.title?.takeIf { !Links.looksLikeUrl(it) }
                     ?: Regex("https?://\\S+").replace(text, "").trim().takeIf { !Links.looksLikeUrl(it) } ?: "$site ürünü"
-                val name = rawTitle.split(Regex("\\s[-|–]\\s")).first()
-                    .replace(Regex("(?i)\\b(fiyatı|fiyatları|yorumları|özellikleri|satın al|ve)\\b"), " ")
-                    .replace(Regex("\\s+"), " ").trim()
+                val name = cleanTitle(rawTitle)
                 alarmDialog(name.ifEmpty { finalUrl }, finalUrl, site, info?.image.orEmpty(), info?.price, info?.inStock,
                     compareName = name.split(" ").take(8).joinToString(" "))
             }
-        }.start()
+        }
     }
 
     // ---------- Rapor ----------

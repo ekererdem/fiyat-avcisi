@@ -1978,6 +1978,7 @@ class MainActivity : Activity(), MatchLogic {
         if (running) return
         stopAll()
         barcodeOnly = true
+        pickFilter = ""
         wordQuery = if (words) code else ""
         barcodeCode = code
         pickFor = null
@@ -2059,8 +2060,58 @@ class MainActivity : Activity(), MatchLogic {
         col.addView(label(if (wordMode) "“$wordQuery”" else "Barkod $barcodeCode", 22f, ink).apply {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
         })
-        val hits = barcodeResults()
-        val near = if (wordMode) wordResults().second else emptyList()
+        // Sonuçlarda ara: yazılan kelimeler ilan adında ya da site adında geçmeli
+        if (final && (barcodeResults().size + (if (wordMode) wordResults().second.size else 0)) > 3) {
+            col.addView(EditText(this).apply {
+                hint = "Sonuçlarda ara: 93, hepsiburada, külot…"
+                setSingleLine()
+                textSize = 14f
+                setTextColor(ink)
+                setHintTextColor(hintColor)
+                background = rounded(greyBg, 22)
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                setText(pickFilter)
+                setSelection(pickFilter.length)
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(e: android.text.Editable?) {
+                        pickFilter = e?.toString().orEmpty()
+                        pickBody?.let { fillPickBody(it, true) }
+                    }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(body)
+        pickBody = body
+        fillPickBody(body, final)
+    }
+
+    private var pickFilter = ""
+    private var pickBody: LinearLayout? = null
+
+    private fun pickPasses(o: Offer): Boolean {
+        val f = normT(pickFilter).split(" ").filter { it.isNotBlank() }
+        if (f.isEmpty()) return true
+        val t = normT(o.title + " " + o.site)
+        val toks = t.split(" ").toSet()
+        return f.all { w -> if (w.any { it.isDigit() }) w in toks || "n$w" in toks else t.contains(w) }
+    }
+
+    private fun fillPickBody(col: LinearLayout, final: Boolean) {
+        col.removeAllViews()
+        val wordMode = wordQuery.isNotEmpty()
+        val allHits = barcodeResults()
+        val allNear = if (wordMode) wordResults().second else emptyList()
+        val hits = allHits.filter { pickPasses(it) }
+        val near = allNear.filter { pickPasses(it) }
+        if (final && pickFilter.isNotBlank()) col.addView(label("Süzgeç: ${hits.size + near.size}/${allHits.size + allNear.size} ilan", 12f, gold, true)
+            .apply { setPadding(dp(4), dp(8), 0, 0) })
+        if (final && pickFilter.isNotBlank() && hits.isEmpty() && near.isEmpty()) {
+            col.addView(label("“$pickFilter” geçen ilan yok.", 14f, muted).apply { setPadding(dp(4), dp(12), 0, 0) })
+            return
+        }
         if (!final) {
             col.addView(label("Siteler taranıyor… " + (if (hits.isNotEmpty()) "${hits.size} ilan bulundu" else ""), 14f, muted)
                 .apply { setPadding(0, dp(10), 0, dp(6)) })
@@ -2106,7 +2157,8 @@ class MainActivity : Activity(), MatchLogic {
                 .apply { setPadding(0, dp(2), 0, dp(4)) })
             near.forEach { barcodeRow(col, it, true, missing = wordMissing(it).firstOrNull { w -> w !in genericWords }) }
         }
-        val chosen = (hits + near).filter { offerKey(it) in barcodePicked }
+        // Süzgeçle gizlenen ama seçili kalan ilanlar da eklenir
+        val chosen = (allHits + allNear).filter { offerKey(it) in barcodePicked }
         col.addView(label(if (chosen.isEmpty()) "Bir ilan seç" else "Listeme ekle (${chosen.size} ilan)", 15f,
             if (chosen.isEmpty()) muted else accentOn, true).apply {
             gravity = Gravity.CENTER
@@ -2129,7 +2181,7 @@ class MainActivity : Activity(), MatchLogic {
             gravity = Gravity.CENTER_VERTICAL
             background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            if (selectable) setOnClickListener { if (on) barcodePicked.remove(key) else barcodePicked.add(key); renderBarcode(true) }
+            if (selectable) setOnClickListener { if (on) barcodePicked.remove(key) else barcodePicked.add(key); pickBody?.let { fillPickBody(it, true) } ?: renderBarcode(true) }
             addView(ImageView(this@MainActivity).apply {
                 background = rounded(Color.WHITE, 8)
                 scaleType = ImageView.ScaleType.FIT_CENTER

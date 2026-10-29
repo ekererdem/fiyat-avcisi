@@ -1651,11 +1651,46 @@ class MainActivity : Activity(), MatchLogic {
         val base = words(forTitle)
         val list = wishEntries(Alarms.load(this)).sortedByDescending { (words(it.title) intersect base).size }
         if (list.isEmpty()) return
-        AlertDialog.Builder(this).setTitle("Hangi ürüne eklensin?")
-            .setItems(list.map { e -> "${e.title.take(60)}\n${e.items.map { it.site }.distinct().joinToString(", ")} · ${e.priceText}" }.toTypedArray()) { _, i ->
-                pick(list[i].focus)
-            }
-            .setNegativeButton("Vazgeç", null).show()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(18), dp(16), dp(8)) }
+        box.addView(label("Hangi ürüne eklensin?", 18f, ink, true).apply { setPadding(dp(4), 0, dp(4), dp(4)) })
+        box.addView(label("Yeni link seçtiğin ürünün kartına katılır.", 13f, muted).apply { setPadding(dp(4), 0, dp(4), dp(12)) })
+        var dlg: AlertDialog? = null
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        list.forEachIndexed { i, e ->
+            rows.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(if (i == 0) greenBg else greyBg, 14, if (i == 0) gold else 0)
+                setPadding(dp(10), dp(10), dp(12), dp(10))
+                setOnClickListener { dlg?.dismiss(); pick(e.focus) }
+                addView(ImageView(this@MainActivity).apply {
+                    background = rounded(Color.WHITE, 10)
+                    setPadding(dp(3), dp(3), dp(3), dp(3))
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    if (e.focus.image.isNotEmpty()) loadImage(e.focus.image, this, Uri.parse(e.focus.link).let { u -> "${u.scheme}://${u.host}/" })
+                }, LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginEnd = dp(12) })
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(e.title, 14f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        e.items.map { it.site }.distinct().forEach { st ->
+                            addView(pill(st, Color.WHITE, siteColors[st] ?: muted, bold = true).apply {
+                                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) }
+                            })
+                        }
+                        addView(label(e.priceText, 14f, green, true))
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (i == 0 && (words(e.title) intersect base).isNotEmpty()) addView(label("benzer", 11f, gold, true).apply { setPadding(dp(6), 0, 0, 0) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
+        }
+        box.addView(ScrollView(this).apply { addView(rows) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        dlg = AlertDialog.Builder(this).setView(box).setNegativeButton("Vazgeç", null).create()
+        dlg.setOnShowListener { dlg.window?.setBackgroundDrawable(rounded(surface, 22)) }
+        dlg.show()
     }
 
     /** Panodaki başka site linkini bu karta ekler */

@@ -2089,6 +2089,17 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private var pickFilter = ""
+    private var linkFilter = ""
+    private var linkFilterGid = -1L
+
+    /** Süzgeç kelimelerinin hepsi metinde geçiyor mu (sayılar tam kelime, "6 numara" = n6) */
+    private fun textPasses(filter: String, text: String): Boolean {
+        val f = normT(filter).split(" ").filter { it.isNotBlank() }
+        if (f.isEmpty()) return true
+        val t = normT(text)
+        val toks = t.split(" ").toSet()
+        return f.all { w -> if (w.any { it.isDigit() }) w in toks || "n$w" in toks else t.contains(w) }
+    }
     private var pickBody: LinearLayout? = null
 
     private fun pickPasses(o: Offer): Boolean {
@@ -4232,10 +4243,37 @@ class MainActivity : Activity(), MatchLogic {
             col.addView(label("Linkler (${items.size})", 15f, ink, true).apply { setPadding(0, dp(22), 0, 0) })
             col.addView(label(if (byUnit) "Paketler farklı, adet fiyatına göre ucuzdan pahalıya" else "Ucuzdan pahalıya", 12f, muted)
                 .apply { setPadding(0, dp(2), 0, dp(8)) })
+            // Linklerde ara (çok link varsa)
+            if (linkFilterGid != gid) { linkFilter = ""; linkFilterGid = gid }
+            val linksBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val countLabel = label("", 12f, gold, true).apply { setPadding(dp(4), dp(6), 0, 0) }
+            lateinit var fillLinks: () -> Unit
+            if (items.size > 4) {
+                col.addView(EditText(this).apply {
+                    hint = "Linklerde ara: 93, trendyol, külot…"
+                    setSingleLine()
+                    textSize = 14f
+                    setTextColor(ink)
+                    setHintTextColor(hintColor)
+                    background = rounded(greyBg, 22)
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
+                    setText(linkFilter)
+                    addTextChangedListener(object : android.text.TextWatcher {
+                        override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                        override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                        override fun afterTextChanged(e: android.text.Editable?) { linkFilter = e?.toString().orEmpty(); fillLinks() }
+                    })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) })
+                col.addView(countLabel)
+            }
+            col.addView(linksBox)
+            fillLinks = {
+            linksBox.removeAllViews()
             sorted.forEachIndexed { i, x ->
+                if (!textPasses(linkFilter, x.title + " " + x.site + " " + x.seller)) return@forEachIndexed
                 val u = units[x.id]
                 val cur = x.id == a.id
-                col.addView(LinearLayout(this).apply {
+                linksBox.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     background = rounded(if (i == 0) greenBg else surface, 14, if (i == 0) gold else line, if (i == 0) 2 else 1)
@@ -4302,6 +4340,12 @@ class MainActivity : Activity(), MatchLogic {
                     }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(8) })
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
             }
+            val shown = sorted.count { textPasses(linkFilter, it.title + " " + it.site + " " + it.seller) }
+            countLabel.text = if (linkFilter.isBlank()) "" else "$shown/${sorted.size} link"
+            countLabel.visibility = if (linkFilter.isBlank()) View.GONE else View.VISIBLE
+            if (shown == 0) linksBox.addView(label("“$linkFilter” geçen link yok.", 14f, muted).apply { setPadding(dp(4), dp(12), 0, 0) })
+            }
+            fillLinks()
             col.addView(label("Dokun: bu linke geç · ✕: linki karttan çıkar · uzun bas: sitede aç", 11f, muted).apply {
                 gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

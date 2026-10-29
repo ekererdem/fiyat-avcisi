@@ -1983,6 +1983,7 @@ class MainActivity : Activity(), MatchLogic {
         barcodeOnly = true
         pickFilter = ""
         pickCache = null
+        pickSites.clear(); pickPacks.clear()
         wordQuery = if (words) code else ""
         barcodeCode = code
         pickFor = null
@@ -2085,6 +2086,11 @@ class MainActivity : Activity(), MatchLogic {
                     }
                 })
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+            // Sonuçlara göre süzgeç çipleri: site, paket, stok
+            val facets = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0) }
+            col.addView(facets)
+            pickFacets = facets
+            paintFacets()
         }
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(body)
@@ -2106,7 +2112,49 @@ class MainActivity : Activity(), MatchLogic {
     }
     private var pickBody: LinearLayout? = null
 
+    // Süzgeç çipleri: aynı gruptakiler "veya", gruplar arası "ve"
+    private val pickSites = mutableSetOf<String>()
+    private val pickPacks = mutableSetOf<Int>()
+    private var pickFacets: LinearLayout? = null
+
+    private fun packOf(o: Offer): Int? = offerUnit(o)?.takeIf { it.first > 1 && it.second == "adet" }?.first?.toInt()
+
+    private fun paintFacets() {
+        val box = pickFacets ?: return
+        box.removeAllViews()
+        val (h, n) = pickResults(true)
+        val all = h + n
+        fun row(title: String, chips: List<Triple<String, Boolean, () -> Unit>>) {
+            if (chips.size < 2) return
+            val strip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            strip.addView(label(title, 12f, muted, true).apply { setPadding(dp(2), 0, dp(8), 0) })
+            chips.forEach { (t, on, act) ->
+                strip.addView(label(t, 13f, if (on) green else ink, true).apply {
+                    background = rounded(if (on) greenBg else surface, 16, if (on) gold else line, if (on) 2 else 1)
+                    setPadding(dp(12), dp(7), dp(12), dp(7))
+                    setOnClickListener { act(); paintFacets(); pickBody?.let { fillPickBody(it, true) } }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+            }
+            box.addView(HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(strip)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
+        }
+        row("Site", all.groupingBy { it.site }.eachCount().entries.sortedByDescending { it.value }.map { (st, c) ->
+            Triple("$st $c", st in pickSites) { if (!pickSites.remove(st)) pickSites.add(st); Unit }
+        })
+        row("Paket", all.mapNotNull { packOf(it) }.groupingBy { it }.eachCount().entries.sortedBy { it.key }.map { (p, c) ->
+            Triple("$p adet · $c", p in pickPacks) { if (!pickPacks.remove(p)) pickPacks.add(p); Unit }
+        })
+        if (pickSites.isNotEmpty() || pickPacks.isNotEmpty()) box.addView(label("Süzgeçleri temizle", 12f, gold, true).apply {
+            setPadding(dp(4), dp(2), 0, dp(4))
+            setOnClickListener { pickSites.clear(); pickPacks.clear(); paintFacets(); pickBody?.let { fillPickBody(it, true) } }
+        })
+    }
+
     private fun pickPasses(o: Offer): Boolean {
+        if (pickSites.isNotEmpty() && o.site !in pickSites) return false
+        if (pickPacks.isNotEmpty() && packOf(o) !in pickPacks) return false
         val f = normT(pickFilter).split(" ").filter { it.isNotBlank() }
         if (f.isEmpty()) return true
         val t = normT(o.title + " " + o.site)
@@ -2142,10 +2190,11 @@ class MainActivity : Activity(), MatchLogic {
         pickAll = allHits + allNear
         val hits = allHits.filter { pickPasses(it) }
         val near = allNear.filter { pickPasses(it) }
-        if (final && pickFilter.isNotBlank()) col.addView(label("Süzgeç: ${hits.size + near.size}/${allHits.size + allNear.size} ilan", 12f, gold, true)
+        val filtering = pickFilter.isNotBlank() || pickSites.isNotEmpty() || pickPacks.isNotEmpty()
+        if (final && filtering) col.addView(label("Süzgeç: ${hits.size + near.size}/${allHits.size + allNear.size} ilan", 12f, gold, true)
             .apply { setPadding(dp(4), dp(8), 0, 0) })
-        if (final && pickFilter.isNotBlank() && hits.isEmpty() && near.isEmpty()) {
-            col.addView(label("“$pickFilter” geçen ilan yok.", 14f, muted).apply { setPadding(dp(4), dp(12), 0, 0) })
+        if (final && filtering && hits.isEmpty() && near.isEmpty()) {
+            col.addView(label("Bu süzgeçlere uyan ilan yok.", 14f, muted).apply { setPadding(dp(4), dp(12), 0, 0) })
             return
         }
         if (!final) {

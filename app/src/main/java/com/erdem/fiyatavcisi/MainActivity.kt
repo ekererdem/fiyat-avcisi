@@ -2104,7 +2104,7 @@ class MainActivity : Activity(), MatchLogic {
             col.addView(label("Bir kelimesi eksik (${near.size})", 15f, orange, true).apply { setPadding(0, dp(20), 0, 0) })
             col.addView(label("Adında yazdığın kelimelerden biri geçmiyor; aynı ürün olabilir de olmayabilir de. Bakıp sen karar ver.", 12f, muted)
                 .apply { setPadding(0, dp(2), 0, dp(4)) })
-            near.forEach { barcodeRow(col, it, true, missing = wordMissing(it).firstOrNull()) }
+            near.forEach { barcodeRow(col, it, true, missing = wordMissing(it).firstOrNull { w -> w !in genericWords }) }
         }
         val chosen = (hits + near).filter { offerKey(it) in barcodePicked }
         col.addView(label(if (chosen.isEmpty()) "Bir ilan seç" else "Listeme ekle (${chosen.size} ilan)", 15f,
@@ -2172,6 +2172,11 @@ class MainActivity : Activity(), MatchLogic {
 
     private val wordStop = setOf("ve", "ile", "icin", "in", "li", "lu", "the", "for")
 
+    /** Ürün türünü anlatan genel kelimeler: ilan adında olmayabilir, eksikse ilan elenmez */
+    private val genericWords = setOf("bebek", "bezi", "bez", "kulot", "mendil", "islak", "kulaklik", "kablosuz", "telefon", "cep",
+        "sampuan", "deterjan", "sivi", "toz", "jel", "krem", "mama", "kedi", "kopek", "kuru", "yas", "sarj", "sarjli", "cihaz", "cihazi",
+        "urun", "urunu", "orijinal", "adet", "paket", "paketi", "set", "seti", "kutu", "parfum", "erkek", "kadin", "unisex", "cocuk")
+
     private fun queryTokens(q: String) = normT(q).split(" ").filter { it.isNotBlank() && it !in wordStop && (it.length >= 2 || it.any { c -> c.isDigit() }) }
 
     /** İlanın adında geçmeyen arama kelimeleri */
@@ -2197,7 +2202,7 @@ class MainActivity : Activity(), MatchLogic {
         val full = mutableListOf<Offer>()
         val near = mutableListOf<Offer>()
         for (o in base) {
-            val m = wordMissing(o)
+            val m = wordMissing(o).filter { it !in genericWords }
             when {
                 m.isEmpty() -> full.add(o)
                 m.size == 1 && qt.size >= 3 && m[0] != qt[0] && m[0].none { it.isDigit() } -> near.add(o)

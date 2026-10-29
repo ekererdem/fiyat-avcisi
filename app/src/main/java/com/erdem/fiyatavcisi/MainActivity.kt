@@ -1578,22 +1578,22 @@ class MainActivity : Activity(), MatchLogic {
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sağ üst: takip (dokununca takipten çıkarma sorusu) ve alarm açık/kapalı
         row.addView(FrameLayout(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greenBg) }
-            contentDescription = "Takipten çıkar"
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greyBg) }
+            contentDescription = "Listeden çıkar"
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Takipten çıkılsın mı?")
+                    .setTitle("Listeden çıkarılsın mı?")
                     .setMessage("“${e.title.take(60)}” listenden silinecek; fiyat geçmişi de izlenmeyecek. Emin misin?")
                     .setPositiveButton("Evet, çıkar") { _, _ ->
                         if (e.gid != 0L) Alarms.removeGroup(this@MainActivity, e.gid) else Alarms.remove(this@MainActivity, a.id)
-                        Toast.makeText(this@MainActivity, "Takipten çıkarıldı", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Listeden çıkarıldı", Toast.LENGTH_SHORT).show()
                         showHome()
                     }
                     .setNegativeButton("Vazgeç", null).show()
             }
             addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.drawable.ic_watch)
-                imageTintList = android.content.res.ColorStateList.valueOf(gold)
+                setImageResource(R.drawable.ic_trash)
+                imageTintList = android.content.res.ColorStateList.valueOf(muted)
             }, FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER })
         }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8) })
         row.addView(FrameLayout(this).apply {
@@ -2400,10 +2400,87 @@ class MainActivity : Activity(), MatchLogic {
         Toast.makeText(this, "Artık ${items.map { it.site }.distinct().size} sitede izleniyor", Toast.LENGTH_SHORT).show()
     }
 
+    /** Hedef fiyat penceresi: adetli üründe adet / toplam seçimi; kaydedince alarm açılır */
+    private fun alarmTargetDialog(gid: Long, a: Alarm, items: List<Alarm>, onDone: () -> Unit) {
+        val ids = items.map { it.id }.toSet()
+            // Adetli ürün mü: karttaki linklerin çoğunda paket miktarı okunuyorsa adet başı hedef seçilebilir
+            val units = items.associate { it.id to listingUnit(it) }
+            val unitOk = units.values.count { it != null } * 2 >= items.size && units.values.any { it != null }
+            val uName = units.values.filterNotNull().firstOrNull()?.second ?: "adet"
+            var byUnit = unitOk && (a.unitTarget > 0 || a.target <= 0)
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
+            val bestTotal = items.mapNotNull { it.lastPrice.takeIf { p -> p > 0 } }.minOrNull()
+            val bestUnit = units.values.filterNotNull().minOfOrNull { it.first }
+            val curLabel = label("", 13f, muted)
+            box.addView(curLabel)
+            val tIn = EditText(this).apply {
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                setSingleLine()
+            }
+            val help = label("", 12f, muted).apply { setPadding(0, dp(4), 0, 0) }
+            fun paint() {
+                curLabel.text = "Şu an en uygun: " + if (byUnit && bestUnit != null) Alarms.unitText(bestUnit, uName) else bestTotal?.let { money(it) } ?: "?"
+                tIn.hint = if (byUnit) "Hedef ${uName} fiyatı (TL/$uName)" else "Hedef toplam fiyat (TL)"
+                help.text = if (byUnit) "Hangi paket olursa olsun ${uName} başına bu fiyatın altına inince haber veririm. Boş bırakırsan her ucuzlamada."
+                    else "Boş bırakırsan her ucuzlamada haber veririm."
+            }
+            if (unitOk) {
+                val seg = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(4)) }
+                val opts = listOf("${uName.replaceFirstChar { it.uppercase() }} fiyatı", "Toplam fiyat")
+                val views = opts.mapIndexed { i, t ->
+                    label(t, 14f, ink, true).apply {
+                        gravity = Gravity.CENTER
+                        setPadding(dp(8), dp(10), dp(8), dp(10))
+                    }.also { v -> seg.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i == 0) marginEnd = dp(8) }) }
+                }
+                fun paintSeg() = views.forEachIndexed { i, v ->
+                    val on = (i == 0) == byUnit
+                    v.background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
+                    v.setTextColor(if (on) green else ink)
+                }
+                views.forEachIndexed { i, v -> v.setOnClickListener { byUnit = i == 0; tIn.setText(""); paintSeg(); paint() } }
+                paintSeg()
+                box.addView(seg, 0)
+            }
+            val t0 = if (byUnit) a.unitTarget else a.target
+            if (!a.watch && t0 > 0) tIn.setText(Alarms.unitText(t0, "").substringBefore(" TL"))
+            box.addView(tIn)
+            box.addView(help)
+            paint()
+            AlertDialog.Builder(this).setTitle(if (a.watch) "Fiyat alarmı kur" else "Alarm")
+                .setView(box)
+                .setPositiveButton("Kaydet") { _, _ ->
+                    val t = parseTl(tIn.text.toString())
+                    Alarms.save(this, Alarms.load(this).map {
+                        if (it.id !in ids) it
+                        else if (byUnit) {
+                            val u = units[it.id]
+                            it.copy(watch = false, target = 0.0, unitTarget = t, unitAmount = u?.third ?: 0.0, unitName = u?.second ?: uName)
+                        } else it.copy(watch = false, target = t, unitTarget = 0.0, unitAmount = 0.0, unitName = "")
+                    })
+                    // Ürün alarmının önceki en iyi değeri eski ölçüye göreydi: sıfırla
+                    if (gid != 0L) getSharedPreferences("alarms", Context.MODE_PRIVATE).edit().remove("gbest_$gid").apply()
+                    // Ölçü değiştiyse (toplam ↔ adet) ürünün en uygun fiyat geçmişi karışmasın
+                    if (gid != 0L && byUnit != (a.unitTarget > 0 || a.unitAmount > 0)) getSharedPreferences("history", Context.MODE_PRIVATE).edit().remove("g:$gid").apply()
+                    askNotificationPermission()
+                    Toast.makeText(this, "Alarm kuruldu" + if (t > 0) " · hedef " + (if (byUnit) Alarms.unitText(t, uName) else money(t)) else "", Toast.LENGTH_SHORT).show()
+                    onDone()
+                }
+                .apply {
+                    if (!a.watch) setNeutralButton("Alarmı kapat") { _, _ ->
+                        Alarms.save(this@MainActivity, Alarms.load(this@MainActivity).map { if (it.id in ids) it.copy(watch = true) else it })
+                        Toast.makeText(this@MainActivity, "Alarm kapatıldı · takip sürüyor", Toast.LENGTH_SHORT).show()
+                        onDone()
+                    }
+                }
+                .setNegativeButton("Vazgeç", null).show()
+            }
+
     /** Kartın alarmını aç/kapat: kapalıyken sadece takip edilir (fiyat ve geçmiş tutulur, bildirim gelmez) */
     private fun toggleAlarm(e: WishEntry) {
         val ids = e.items.map { it.id }.toSet()
         val toWatch = !e.watch
+        if (!toWatch && e.target <= 0) { alarmTargetDialog(e.gid, e.focus, e.items) { showHome() }; return }
         Alarms.save(this, Alarms.load(this).map { if (it.id in ids) it.copy(watch = toWatch) else it })
         if (!toWatch) askNotificationPermission()
         Toast.makeText(this, if (toWatch) "Alarm kapatıldı · sadece takip" else
@@ -4267,94 +4344,7 @@ class MainActivity : Activity(), MatchLogic {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
         }
         val ids = items.map { it.id }.toSet()
-        // Takip et: takipteyse çıkarma sorusu; alarmdaysa bildirimsiz takibe çevirir
-        act(R.drawable.ic_watch, if (a.watch) "Takipte" else "Takip et", a.watch) {
-            if (a.watch) {
-                AlertDialog.Builder(this).setTitle("Takipten çıkarılsın mı?")
-                    .setPositiveButton("Çıkar") { _, _ ->
-                        if (gid != 0L) Alarms.removeGroup(this, gid) else Alarms.remove(this, a.id)
-                        itemGoBack()
-                    }.setNegativeButton("Vazgeç", null).show()
-            } else {
-                Alarms.save(this, Alarms.load(this).map { if (it.id in ids) it.copy(watch = true) else it })
-                Toast.makeText(this, "Takibe çevrildi: bildirim gelmeyecek", Toast.LENGTH_SHORT).show()
-                alarmPage(gid, a.id)
-            }
-        }
-        // Alarm kur: hedef fiyat sorulur; alarm varsa hedef değiştirilir ya da alarm silinir
-        act(R.drawable.ic_bell, if (a.watch) "Alarm kur" else "Alarm var", !a.watch) {
-            // Adetli ürün mü: karttaki linklerin çoğunda paket miktarı okunuyorsa adet başı hedef seçilebilir
-            val units = items.associate { it.id to listingUnit(it) }
-            val unitOk = units.values.count { it != null } * 2 >= items.size && units.values.any { it != null }
-            val uName = units.values.filterNotNull().firstOrNull()?.second ?: "adet"
-            var byUnit = unitOk && (a.unitTarget > 0 || a.target <= 0)
-            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
-            val bestTotal = items.mapNotNull { it.lastPrice.takeIf { p -> p > 0 } }.minOrNull()
-            val bestUnit = units.values.filterNotNull().minOfOrNull { it.first }
-            val curLabel = label("", 13f, muted)
-            box.addView(curLabel)
-            val tIn = EditText(this).apply {
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-                setSingleLine()
-            }
-            val help = label("", 12f, muted).apply { setPadding(0, dp(4), 0, 0) }
-            fun paint() {
-                curLabel.text = "Şu an en uygun: " + if (byUnit && bestUnit != null) Alarms.unitText(bestUnit, uName) else bestTotal?.let { money(it) } ?: "?"
-                tIn.hint = if (byUnit) "Hedef ${uName} fiyatı (TL/$uName)" else "Hedef toplam fiyat (TL)"
-                help.text = if (byUnit) "Hangi paket olursa olsun ${uName} başına bu fiyatın altına inince haber veririm. Boş bırakırsan her ucuzlamada."
-                    else "Boş bırakırsan her ucuzlamada haber veririm."
-            }
-            if (unitOk) {
-                val seg = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(4)) }
-                val opts = listOf("${uName.replaceFirstChar { it.uppercase() }} fiyatı", "Toplam fiyat")
-                val views = opts.mapIndexed { i, t ->
-                    label(t, 14f, ink, true).apply {
-                        gravity = Gravity.CENTER
-                        setPadding(dp(8), dp(10), dp(8), dp(10))
-                    }.also { v -> seg.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i == 0) marginEnd = dp(8) }) }
-                }
-                fun paintSeg() = views.forEachIndexed { i, v ->
-                    val on = (i == 0) == byUnit
-                    v.background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
-                    v.setTextColor(if (on) green else ink)
-                }
-                views.forEachIndexed { i, v -> v.setOnClickListener { byUnit = i == 0; tIn.setText(""); paintSeg(); paint() } }
-                paintSeg()
-                box.addView(seg, 0)
-            }
-            val t0 = if (byUnit) a.unitTarget else a.target
-            if (!a.watch && t0 > 0) tIn.setText(Alarms.unitText(t0, "").substringBefore(" TL"))
-            box.addView(tIn)
-            box.addView(help)
-            paint()
-            AlertDialog.Builder(this).setTitle(if (a.watch) "Fiyat alarmı kur" else "Alarm")
-                .setView(box)
-                .setPositiveButton("Kaydet") { _, _ ->
-                    val t = parseTl(tIn.text.toString())
-                    Alarms.save(this, Alarms.load(this).map {
-                        if (it.id !in ids) it
-                        else if (byUnit) {
-                            val u = units[it.id]
-                            it.copy(watch = false, target = 0.0, unitTarget = t, unitAmount = u?.third ?: 0.0, unitName = u?.second ?: uName)
-                        } else it.copy(watch = false, target = t, unitTarget = 0.0, unitAmount = 0.0, unitName = "")
-                    })
-                    // Ürün alarmının önceki en iyi değeri eski ölçüye göreydi: sıfırla
-                    if (gid != 0L) getSharedPreferences("alarms", Context.MODE_PRIVATE).edit().remove("gbest_$gid").apply()
-                    // Ölçü değiştiyse (toplam ↔ adet) ürünün en uygun fiyat geçmişi karışmasın
-                    if (gid != 0L && byUnit != (a.unitTarget > 0 || a.unitAmount > 0)) getSharedPreferences("history", Context.MODE_PRIVATE).edit().remove("g:$gid").apply()
-                    askNotificationPermission()
-                    Toast.makeText(this, "Alarm kuruldu" + if (t > 0) " · hedef " + (if (byUnit) Alarms.unitText(t, uName) else money(t)) else "", Toast.LENGTH_SHORT).show()
-                    alarmPage(gid, a.id)
-                }
-                .apply {
-                    if (!a.watch) setNeutralButton("Alarmı kapat") { _, _ ->
-                        Alarms.save(this@MainActivity, Alarms.load(this@MainActivity).map { if (it.id in ids) it.copy(watch = true) else it })
-                        Toast.makeText(this@MainActivity, "Alarm kapatıldı · takip sürüyor", Toast.LENGTH_SHORT).show()
-                        alarmPage(gid, a.id)
-                    }
-                }
-                .setNegativeButton("Vazgeç", null).show()
-        }
+        act(R.drawable.ic_bell, if (a.watch) "Alarm kur" else "Alarm açık", !a.watch) { alarmTargetDialog(gid, a, items) { alarmPage(gid, a.id) } }
         act(R.drawable.ic_open, "Siteye git", false) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (e: Exception) {} }
         // Tek ilan: aynı ürünü diğer sitelerde ara; sonuçlarda zile dokunup bütün sitelerde izlemeye geçilir
         act(R.drawable.ic_share, "Link ekle", false) { attachFromClipboard(a) }
@@ -4493,6 +4483,24 @@ class MainActivity : Activity(), MatchLogic {
                 gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        // En altta: ürünü listeden tamamen çıkar
+        col.addView(label("Listeden çıkar", 15f, red, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(redBg, 22)
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Listeden çıkarılsın mı?")
+                    .setMessage("“${(a.groupName.ifEmpty { a.title }).take(60)}”" + (if (items.size > 1) " ve ${items.size} linki" else "") +
+                        " listenden silinecek. Emin misin?")
+                    .setPositiveButton("Evet, çıkar") { _, _ ->
+                        if (gid != 0L) Alarms.removeGroup(this@MainActivity, gid) else Alarms.remove(this@MainActivity, a.id)
+                        Toast.makeText(this@MainActivity, "Listeden çıkarıldı", Toast.LENGTH_SHORT).show()
+                        itemGoBack()
+                    }
+                    .setNegativeButton("Vazgeç", null).show()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) })
         resultsScroll.post { resultsScroll.scrollTo(0, 0) }
     }
 
@@ -5038,38 +5046,8 @@ class MainActivity : Activity(), MatchLogic {
         ).apply { setPadding(0, dp(6), 0, dp(10)) })
 
         val existing = Alarms.load(this).firstOrNull { it.link.substringBefore('?') == link.substringBefore('?') }
-        // Alarm mı, sadece takip mi: kullanıcı seçer (varsayılan yok; kayıtlıysa mevcut hali)
-        var chosenWatch: Boolean? = existing?.watch
-        val alarmBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        var dialogRef: AlertDialog? = null
-        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(2), 0, dp(10)) }
-        val optViews = mutableListOf<LinearLayout>()
-        fun paintModes() {
-            optViews.forEachIndexed { i, v ->
-                val on = chosenWatch == (i == 1)
-                v.background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
-            }
-            alarmBox.visibility = if (chosenWatch == false) View.VISIBLE else View.GONE
-            dialogRef?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = chosenWatch != null
-        }
-        listOf(Triple(R.drawable.ic_bell, "Alarm kur", "Fiyat düşünce bildirim"), Triple(R.drawable.ic_watch, "Sadece takip", "Bildirim yok")).forEachIndexed { i, (ic, t, sub) ->
-            val v = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(6), dp(12), dp(6), dp(10))
-                setOnClickListener { chosenWatch = i == 1; paintModes() }
-                addView(ImageView(this@MainActivity).apply {
-                    setImageResource(ic)
-                    imageTintList = android.content.res.ColorStateList.valueOf(gold)
-                }, LinearLayout.LayoutParams(dp(26), dp(26)))
-                addView(label(t, 14f, ink, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
-                addView(label(sub, 11f, muted).apply { gravity = Gravity.CENTER })
-            }
-            optViews.add(v)
-            modeRow.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i == 0) marginEnd = dp(8) })
-        }
-        box.addView(modeRow)
-        box.addView(alarmBox)
+        // Eklenen her ürün takipte. Hedef yazılırsa alarm açılır; boşsa sadece takip (bildirim yok).
+        val u2 = unit ?: try { offerUnit(Offer(site, title, price ?: 0.0, 0.0, false, "", "", link, title))?.takeIf { it.first > 1 } } catch (e: Exception) { null }
 
         // Ne takip edilsin: bu ilan mı, ürün bütün sitelerde mi
         val scopeGroup = android.widget.RadioGroup(this)
@@ -5085,44 +5063,48 @@ class MainActivity : Activity(), MatchLogic {
             box.addView(scopeGroup)
         }
 
-        // Hedef: toplam fiyat mı, adet başı mı
-        val modeGroup = android.widget.RadioGroup(this).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        val mTotal = android.widget.RadioButton(this).apply { id = View.generateViewId(); text = "Toplam fiyat" }
-        val mUnit = android.widget.RadioButton(this).apply { id = View.generateViewId(); text = "${unit?.second?.replaceFirstChar { it.uppercase() } ?: "Adet"} başı" }
+        // Hedef: adetli üründe adet fiyatı ya da toplam
+        var byUnitSel = u2 != null && (existing == null || existing.unitTarget > 0 || existing.target <= 0)
         val target = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSingleLine()
         }
-        val setHint = {
-            target.hint = if (unit != null && modeGroup.checkedRadioButtonId == mUnit.id)
-                "Hedef TL/${unit.second} (boş: her düşüşte)" else "Hedef fiyat TL (boş: her düşüşte)"
+        val help = label("", 12f, muted).apply { setPadding(0, dp(4), 0, 0) }
+        fun setHint() {
+            target.hint = if (byUnitSel && u2 != null) "Hedef ${u2.second} fiyatı (TL/${u2.second})" else "Hedef fiyat (TL)"
+            help.text = "Boş bırakırsan sadece takip edilir, bildirim gelmez. Hedef yazarsan altına inince haber veririm." +
+                if (byUnitSel && u2 != null && price != null) " Şu an ${Alarms.unitText(price / u2.first, u2.second)}." else ""
         }
-        if (unit != null) {
-            alarmBox.addView(label("Hedef nasıl olsun?", 13f, ink, true).apply { setPadding(0, dp(8), 0, 0) })
-            modeGroup.addView(mTotal); modeGroup.addView(mUnit)
-            modeGroup.check(mUnit.id)
-            modeGroup.setOnCheckedChangeListener { _, _ -> setHint() }
-            alarmBox.addView(modeGroup)
+        box.addView(label("Hedef fiyat (isteğe bağlı)", 13f, ink, true).apply { setPadding(0, dp(4), 0, 0) })
+        if (u2 != null) {
+            val seg = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, dp(4)) }
+            val views = listOf("${u2.second.replaceFirstChar { it.uppercase() }} fiyatı", "Toplam fiyat").mapIndexed { i, t ->
+                label(t, 13f, ink, true).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(9), dp(6), dp(9)) }
+                    .also { v -> seg.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i == 0) marginEnd = dp(8) }) }
+            }
+            fun paintSeg() = views.forEachIndexed { i, v ->
+                val on = (i == 0) == byUnitSel
+                v.background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
+                v.setTextColor(if (on) green else ink)
+            }
+            views.forEachIndexed { i, v -> v.setOnClickListener { byUnitSel = i == 0; target.setText(""); paintSeg(); setHint() } }
+            paintSeg()
+            box.addView(seg)
         }
         setHint()
-        alarmBox.addView(label("Hedef fiyat", 13f, ink, true))
-        alarmBox.addView(target)
-        existing?.let { ex -> val t0 = if (ex.unitTarget > 0) ex.unitTarget else ex.target; if (t0 > 0) target.setText(Alarms.unitText(t0, "").substringBefore(" TL")) }
-        val stock = android.widget.CheckBox(this).apply {
-            text = "Stoğa girince de haber ver"
-            isChecked = existing?.wantStock ?: (available == false)
-        }
-        alarmBox.addView(stock)
+        box.addView(target)
+        box.addView(help)
+        existing?.let { ex -> val t0 = if (ex.unitTarget > 0) ex.unitTarget else ex.target; if (!ex.watch && t0 > 0) target.setText(Alarms.unitText(t0, "").substringBefore(" TL")) }
         box.addView(label("Fiyatlar ${Alarms.hours(this)} saatte bir kontrol edilir.", 12f, muted)
-            .apply { setPadding(0, dp(6), 0, 0) })
-        dialogRef = AlertDialog.Builder(this)
+            .apply { setPadding(0, dp(8), 0, 0) })
+        AlertDialog.Builder(this)
             .setTitle(if (existing != null) "Listende var — güncelle" else "Listeye ekle")
             .setView(box)
             .setPositiveButton(if (existing != null) "Kaydet" else "Ekle") { _, _ -> try {
                 if (replaceGroup != 0L) Alarms.removeGroup(this, replaceGroup)
-                val watchOnly = chosenWatch == true
-                val t = if (watchOnly) 0.0 else target.text.toString().replace(".", "").replace(",", ".").toDoubleOrNull() ?: 0.0
-                val byUnit = unit != null && modeGroup.checkedRadioButtonId == mUnit.id
+                val t = parseTl(target.text.toString())
+                val watchOnly = t <= 0
+                val byUnit = !watchOnly && byUnitSel && u2 != null
                 val wantGroup = group.size >= 2 && scopeGroup.checkedRadioButtonId == rAll.id
                 if (wantGroup) {
                     val gid = System.currentTimeMillis()
@@ -5132,7 +5114,7 @@ class MainActivity : Activity(), MatchLogic {
                         Alarm(
                             id = gid + i, title = c.title, site = c.site, link = c.link, image = c.image,
                             startPrice = c.price, lastPrice = c.price, lowest = c.price,
-                            target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = true,
+                            target = if (byUnit) 0.0 else t, wantStock = false, inStock = true,
                             lastCheck = 0L, status = "henüz kontrol edilmedi",
                             unitAmount = if (byUnit) cu?.first ?: 0.0 else 0.0, unitName = if (byUnit) cu?.second.orEmpty() else "",
                             unitTarget = if (byUnit) t else 0.0, groupId = gid, groupName = name, groupQuery = userInput,
@@ -5140,30 +5122,34 @@ class MainActivity : Activity(), MatchLogic {
                         )
                     }
                     Alarms.addGroup(this, items)
-                    Toast.makeText(this, "Listene eklendi: ${items.size} sitede izleniyor", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Takip listene eklendi: ${items.size} sitede izleniyor", Toast.LENGTH_SHORT).show()
                 } else {
                     val p = price ?: 0.0
                     val newId = existing?.id ?: System.currentTimeMillis()
                     Alarms.add(this, Alarm(
                         id = newId, title = title, site = site, link = Links.clean(link), image = image,
                         startPrice = existing?.startPrice ?: p, lastPrice = p, lowest = if (p > 0) p else 0.0,
-                        target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = available,
+                        target = if (byUnit) 0.0 else t, wantStock = existing?.wantStock ?: false, inStock = available,
                         lastCheck = 0L, status = "henüz kontrol edilmedi",
-                        unitAmount = if (unit != null) unit.first else 0.0, unitName = unit?.second.orEmpty(),
+                        unitAmount = if (byUnit) u2!!.first else 0.0, unitName = if (byUnit) u2!!.second else "",
                         unitTarget = if (byUnit) t else 0.0, watch = watchOnly,
                     ))
-                    // Barkoddan seçilen diğer siteler: aynı karta
+                    // Barkoddan / aramadan seçilen diğer ilanlar: aynı karta
                     extras.forEach { x ->
-                        Alarms.load(this).firstOrNull { it.id == newId || (it.groupId != 0L && Alarms.load(this).any { m -> m.id == newId && m.groupId == it.groupId }) }
+                        Alarms.load(this).firstOrNull { it.id == newId }
                             ?.let { tgt -> joinGroup(tgt, newListing(x.title, x.link, x.site, x.image, x.price, true, null), quiet = true) }
                     }
-                    Toast.makeText(this, if (existing != null) "Güncellendi" else if (watchOnly) "Takibe alındı" else "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, when {
+                        existing != null -> "Güncellendi"
+                        watchOnly -> "Takip listene eklendi"
+                        else -> "Takip listene eklendi · alarm " + if (byUnit) Alarms.unitText(t, u2!!.second) else money(t)
+                    }, Toast.LENGTH_SHORT).show()
                 }
                 if (!watchOnly) askNotificationPermission()
                 if (compareName != null && !running) goHome()
                 else if (offers.isNotEmpty() && !running) render(final = finished) else if (!running) showHome()
             } catch (e: Exception) {
-                AlertDialog.Builder(this).setTitle("Alarm kurulamadı")
+                AlertDialog.Builder(this).setTitle("Eklenemedi")
                     .setMessage(e.javaClass.simpleName + ": " + (e.message ?: ""))
                     .setNegativeButton("Kapat", null).show()
             } }
@@ -5174,15 +5160,14 @@ class MainActivity : Activity(), MatchLogic {
                     if (compareName != null && !running) goHome()
                     else if (offers.isNotEmpty() && !running) render(final = finished)
                 } else if (compareName != null && Alarms.load(this@MainActivity).isNotEmpty()) setNeutralButton("Listemdeki ürüne ekle") { _, _ ->
-                    chooseCard(title) { target ->
-                        joinGroup(target, newListing(title, link, site, image, price, available, null))
+                    chooseCard(title) { tg ->
+                        joinGroup(tg, newListing(title, link, site, image, price, available, null))
                         showHome()
                     }
                 }
             }
             .setNegativeButton("Vazgeç", null)
             .show()
-        paintModes()
     }
 
     private fun askNotificationPermission() {

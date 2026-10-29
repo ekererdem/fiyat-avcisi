@@ -1537,6 +1537,7 @@ class MainActivity : Activity(), MatchLogic {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) }
         })
         info.addView(priceRow)
+        if (a.unitTarget <= 0) listingUnitText(a)?.let { info.addView(label("📦 $it", 12f, muted, true).apply { setPadding(0, dp(2), 0, 0) }) }
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sağ üst: takip (dokununca takipten çıkarma sorusu) ve alarm açık/kapalı
         row.addView(FrameLayout(this).apply {
@@ -3910,7 +3911,7 @@ class MainActivity : Activity(), MatchLogic {
             if (a.lastPrice > 0 && a.lastPrice < a.startPrice) green else ink, true))
         if (a.seller.isNotEmpty()) col.addView(label("Satıcı: ${a.seller}" + if (a.sellers > 1) " · ${a.sellers} satıcı arasında en ucuz" else "", 13f, muted)
             .apply { setPadding(0, dp(4), 0, 0) })
-        a.unitPrice()?.let { col.addView(label(Alarms.unitText(it, a.unitName), 13f, muted).apply { setPadding(0, dp(4), 0, 0) }) }
+        listingUnitText(a)?.let { col.addView(label("📦 $it", 14f, muted, true).apply { setPadding(0, dp(4), 0, 0) }) }
         val t = if (a.unitTarget > 0) Alarms.unitText(a.unitTarget, a.unitName) else if (a.target > 0) money(a.target) else null
         if (!a.watch) col.addView(label(if (t != null) "Hedef: $t" else "Hedef: her ucuzlamada haber ver", 13f, ink, true).apply { setPadding(0, dp(6), 0, 0) })
 
@@ -4027,7 +4028,12 @@ class MainActivity : Activity(), MatchLogic {
                     addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, if (x.id == a.id) gold else ink, x.id == a.id).apply {
                         maxLines = 1; ellipsize = TextUtils.TruncateAt.END
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true))
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        gravity = Gravity.END
+                        addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true).apply { gravity = Gravity.END })
+                        if (!unit) listingUnitText(x)?.let { addView(label(it.substringBefore(" ·"), 11f, muted).apply { gravity = Gravity.END }) }
+                    })
                 })
                 col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
             }
@@ -4488,6 +4494,16 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     /** İlanın birim bölümü: birim fiyat = fiyat / bölüm ("216 adet" -> 216, "200 g" -> 0,2 kg) */
+    /** Kayıtlı ilanın birim fiyatı: adet / kg / L başı. Adı paket miktarı yazmıyorsa null */
+    private fun listingUnitText(a: Alarm, price: Double = a.lastPrice): String? {
+        if (price <= 0) return null
+        a.unitPrice(price)?.let { return Alarms.unitText(it, a.unitName) }
+        val u = try { offerUnit(Offer(a.site, a.title, price, 0.0, false, "", "", a.link, a.title)) } catch (e: Exception) { null } ?: return null
+        if (u.first <= 1) return null
+        val amt = if (u.second == "adet") "${u.first.toInt()} adet" else "${Alarms.unitText(u.first, "").substringBefore(" TL")} ${u.second}"
+        return "${Alarms.unitText(price / u.first, u.second)} · $amt"
+    }
+
     private fun offerUnit(o: Offer): Pair<Double, String>? {
         if (isSet(o)) return null
         val a = amountOf(o.title, queryAmount?.unit) ?: return null

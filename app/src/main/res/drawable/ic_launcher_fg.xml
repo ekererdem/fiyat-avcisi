@@ -5,10 +5,10 @@
     android:viewportWidth="108" android:viewportHeight="108">
     <group android:scaleX="0.92" android:scaleY="0.92" android:translateX="9.4" android:translateY="5.7">
         <!-- Etiket gövdesi; ip deliği ve büyüteç camı oyuk -->
-        <path android:fillColor="#F2C14E" android:fillType="evenOdd"
+        <path android:fillColor="#2DD4BF" android:fillType="evenOdd"
             android:pathData="M18,47 L45,20 H75 A6,6 0 0,1 81,26 V56 L54,83 A6,6 0 0,1 45.5,83 L18,55.5 A6,6 0 0,1 18,47 Z M68,28 A5,5 0 1,0 68,38 A5,5 0 1,0 68,28 Z M47,40 A15,15 0 1,0 47,70 A15,15 0 1,0 47,40 Z" />
         <!-- Büyüteç camının içi -->
-        <path android:fillColor="#F2C14E" android:fillType="evenOdd"
+        <path android:fillColor="#2DD4BF" android:fillType="evenOdd"
             android:pathData="M47,46 A9,9 0 1,0 47,64 A9,9 0 1,0 47,46 Z" />
         <!-- Sap -->
         <path android:fillColor="#00000000" android:strokeColor="#15202B" android:strokeWidth="7" android:strokeLineCap="round"

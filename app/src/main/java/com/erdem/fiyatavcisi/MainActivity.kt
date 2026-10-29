@@ -122,15 +122,15 @@ class MainActivity : Activity(), MatchLogic {
         if (dark) {
             // Loş lacivert (eski Twitter "Dim" teması gibi)
             paper = c("#15202B"); surface = c("#1C2A38"); greyBg = c("#253341"); ink = c("#F2F5F7"); muted = c("#8B98A5")
-            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#F2C14E"); accentOn = c("#15202B"); brand = c("#F2C14E")
+            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#2DD4BF"); accentOn = c("#0F1F24"); brand = c("#2DD4BF")
             // Vurgu rengi: İzci logosunun sarısı (önceden yeşildi)
-            green = c("#F2C14E"); red = c("#F4908A"); orange = c("#F5A962")
-            greenBg = c("#3A3218"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#363423")
+            green = c("#2DD4BF"); red = c("#F4908A"); orange = c("#F5A962")
+            greenBg = c("#123A3A"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#15343A")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
-            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#A16207"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
-            green = c("#A16207"); red = c("#B42318"); orange = c("#B54708")
-            greenBg = c("#FFF4D6"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#FFF6DB")
+            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0D9488"); accentOn = c("#FFFFFF"); brand = c("#14B8A6")
+            green = c("#0D9488"); red = c("#B42318"); orange = c("#B54708")
+            greenBg = c("#DDF7F3"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#E6FAF7")
         }
     }
 
@@ -167,7 +167,8 @@ class MainActivity : Activity(), MatchLogic {
     private fun updateNav() {
         if (!::navBar.isInitialized) return
         val cur = when (screen) {
-            "alarms", "watch", "item", "pick" -> "home"
+            "item", "pick" -> homeFilter
+            "settings" -> "profile"
             "results", "product" -> "search"
             else -> screen
         }
@@ -188,7 +189,7 @@ class MainActivity : Activity(), MatchLogic {
         fun item(key: String, icon: Int, text: String, action: () -> Unit) {
             val iv = ImageView(this).apply { setImageResource(icon) }
             // Ayarlar simgesinde yeni sürüm noktası
-            val iconView: View = if (key != "settings") iv else FrameLayout(this).apply {
+            val iconView: View = if (key != "profile") iv else FrameLayout(this).apply {
                 addView(iv, FrameLayout.LayoutParams(dp(24), dp(24)))
                 gearDot = View(this@MainActivity).apply {
                     background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c("#E5484D")); setStroke(dp(2), surface) }
@@ -210,8 +211,10 @@ class MainActivity : Activity(), MatchLogic {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             navItems.add(Triple(key, iv, tv))
         }
-        item("home", R.drawable.ic_home, "Listem") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; goHome() }
-        item("settings", R.drawable.ic_gear, "Ayarlar") { showSettings() }
+        item("home", R.drawable.ic_home, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; homeFilter = "home"; goHome() }
+        item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms("alarms") }
+        item("watch", R.drawable.ic_watch, "Takip") { showAlarms("watch") }
+        item("profile", R.drawable.ic_person, "Profil") { showSettings() }
         updateNav()
         updateGearDot()
         return navBar
@@ -455,6 +458,7 @@ class MainActivity : Activity(), MatchLogic {
                 }
                 settings.edit().putString("profileName", name.text.toString().trim()).putString("profileMail", m).apply()
                 avatarView?.text = initials()
+                if (screen == "profile") showSettings()
             }
             .setNegativeButton("Vazgeç", null)
         if (profileMail().isNotEmpty() || profileName().isNotEmpty()) b.setNeutralButton("Çıkış yap") { _, _ ->
@@ -780,7 +784,7 @@ class MainActivity : Activity(), MatchLogic {
         lastUpdateLook = now
         Update.check(this) { _, _, _ ->
             updateGearDot()
-            if (screen == "home" && !running) showHome()
+            if (onList() && !running) showHome()
         }
     }
 
@@ -840,7 +844,8 @@ class MainActivity : Activity(), MatchLogic {
             running -> { stopAll(); running = false; progress.visibility = View.GONE; goHome() }
             screen == "product" -> backToResults()
             screen == "item" -> itemGoBack()
-            screen == "settings" || screen == "alarms" || screen == "watch" -> {
+            screen == "profile" || screen == "alarms" || screen == "watch" -> { homeFilter = "home"; goHome() }
+            screen == "settings" -> {
                 if (offers.isNotEmpty()) {
                     filterBar.visibility = View.VISIBLE
                     chipsScroll.visibility = if (running) View.VISIBLE else View.GONE
@@ -873,7 +878,7 @@ class MainActivity : Activity(), MatchLogic {
         super.onResume()
         maybeCheckUpdate()
         // İzin ekranından dönünce durumları yenile
-        if (screen == "settings") showSettings()
+        if (screen == "profile") showSettings()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1388,9 +1393,13 @@ class MainActivity : Activity(), MatchLogic {
     @Volatile private var homeChecking = false
 
     /** Listem: takip edilen bütün ürünler; hedefe inenler üstte */
+    /** Ana sayfa / Alarmlar / Takip: aynı kart listesi, farklı süzgeç */
+    private var homeFilter = "home"
+    private fun onList() = screen == "home" || screen == "alarms" || screen == "watch"
+
     private fun showHome() {
         if (running) return
-        screen = "home"
+        screen = homeFilter
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         status.visibility = View.GONE
@@ -1418,17 +1427,19 @@ class MainActivity : Activity(), MatchLogic {
         }
 
         val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
-        val list = wishEntries(all)
+        val list = wishEntries(all).filter { when (homeFilter) { "alarms" -> !it.watch; "watch" -> it.watch; else -> true } }
         val hits = list.count { it.hit }
         val newest = all.maxOfOrNull { it.lastCheck } ?: 0L
 
         // Başlık
-        results.addView(label("Listem", 26f, ink, true).apply {
+        results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Takip"; else -> "Listem" }, 26f, ink, true).apply {
             typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
             setPadding(dp(4), dp(16), dp(4), 0)
         })
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
         results.addView(label(when {
+            list.isEmpty() && homeFilter == "alarms" -> "Alarm kurulu ürün yok. Bir kartın zilini açınca burada görünür."
+            list.isEmpty() && homeFilter == "watch" -> "Sadece takip ettiğin ürün yok. Bir kartın zilini kapatınca burada görünür."
             list.isEmpty() -> "Almak istediğin ürünleri ekle, fiyatı düşünce haber vereyim."
             else -> "${list.size} ürün" + (if (hits > 0) " · $hits tanesi hedefte 🎯" else "") +
                 (if (homeChecking) " · fiyatlar kontrol ediliyor…" else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
@@ -1451,6 +1462,7 @@ class MainActivity : Activity(), MatchLogic {
 
         results.addView(btns)
 
+        if (list.isEmpty() && homeFilter != "home") return
         if (list.isEmpty()) {
             results.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1491,7 +1503,7 @@ class MainActivity : Activity(), MatchLogic {
             orientation = LinearLayout.VERTICAL
             background = rounded(if (e.hit) greenBg else surface, 18, if (e.hit) gold else line, if (e.hit) 2 else 1)
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            setOnClickListener { itemBack = "home"; alarmPage(e.gid, a.id) }
+            setOnClickListener { itemBack = homeFilter; alarmPage(e.gid, a.id) }
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(ImageView(this).apply {
@@ -1890,14 +1902,14 @@ class MainActivity : Activity(), MatchLogic {
     private fun refreshList() {
         if (homeChecking) return
         homeChecking = true
-        if (screen == "home") showHome()
+        if (onList()) showHome()
         Thread {
             try { Alarms.checkAll(applicationContext) } catch (e: Exception) {}
             handler.post {
-                if (screen == "home" && !running) showHome()
+                if (onList() && !running) showHome()
                 repairEntries {
                     homeChecking = false
-                    if (screen == "home" && !running) showHome()
+                    if (onList() && !running) showHome()
                 }
             }
         }.start()
@@ -4117,8 +4129,8 @@ class MainActivity : Activity(), MatchLogic {
 
     private fun showSettings() {
         if (running) return
-        val keepY = if (screen == "settings") resultsScroll.scrollY else 0
-        screen = "settings"
+        val keepY = if (screen == "profile") resultsScroll.scrollY else 0
+        screen = "profile"
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
         progress.visibility = View.GONE
@@ -4129,56 +4141,49 @@ class MainActivity : Activity(), MatchLogic {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), 0)
         }
-        head.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(label("Ayarlar", 22f, ink, true))
-            addView(label("İzci'yi kendi alışveriş alışkanlığına göre ayarla", 13f, muted).apply { setPadding(0, dp(2), 0, 0) })
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(label("Profil", 26f, ink, true).apply {
+            typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
+        })
         results.addView(head)
-
-        // Arama sonuçları
-        val res = settingsCard("Arama sonuçları")
-        val trustKeys = listOf("hideAbroad", "hideImporter", "hideUsed", "hideSuspicious")
-        switchRow(res, "Yalnızca güvenilir ilanları göster",
-            "Şüpheli derecede ucuz, ithalatçı garantili, yurt dışı, ikinci el ve yenilenmiş ilanları sonuçlardan çıkarır",
-            trustKeys.all { flag(it) }) { v ->
-            settings.edit().apply { trustKeys.forEach { putBoolean(it, v) } }.apply()
-        }
-        val ratings = listOf(0f, 3.5f, 4f, 4.5f)
-        val ratingNames = listOf("Fark etmez", "3,5 ve üzeri", "4,0 ve üzeri", "4,5 ve üzeri")
-        val counts = listOf(0, 10, 50, 100)
-        val countNames = listOf("Fark etmez", "10 ve üzeri", "50 ve üzeri", "100 ve üzeri")
-        choiceRow(res, "En düşük ürün puanı", "Bu puanın altındaki ilanlar listelenmez; henüz puanı olmayan ürünler görünmeye devam eder",
-            ratingNames, ratings.indexOf(settings.getFloat("minRating", 0f)).coerceAtLeast(0)) { i ->
-            settings.edit().putFloat("minRating", ratings[i]).apply()
-        }
-        choiceRow(res, "En az değerlendirme", "Yeterince değerlendirilmemiş ilanları gizleyerek daha bilinen satıcıları öne çıkarır",
-            countNames, counts.indexOf(settings.getInt("minReviews", 0)).coerceAtLeast(0)) { i ->
-            settings.edit().putInt("minReviews", counts[i]).apply()
-        }
-
-        // Mağazalar
-        val src = settingsCard("Mağazalar")
-        src.addView(label("Fiyatlarını karşılaştırmak istediğin mağazaları seç. İzci, aradığın ürünün türüne uygun mağazaları ayrıca kendisi belirler.",
-            13f, muted).apply { setPadding(dp(2), dp(10), dp(2), dp(10)) })
-        val siteFlow = FlowLayout(this, dp(8)).apply { setPadding(dp(2), 0, dp(2), dp(12)) }
-        sites.forEach { site ->
-            val chip = TextView(this).apply { textSize = 13f; setPadding(dp(12), dp(8), dp(12), dp(8)) }
-            fun paint() {
-                val on = siteOn(site.name)
-                chip.text = if (on) "✓ ${site.name}" else site.name
-                chip.setTextColor(if (on) green else muted)
-                chip.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                chip.background = if (on) rounded(greenBg, 18) else rounded(paper, 18, line)
-            }
-            paint()
-            chip.setOnClickListener {
-                settings.edit().putBoolean("site_${site.name}", !siteOn(site.name)).apply()
-                paint()
-            }
-            siteFlow.addView(chip)
-        }
-        src.addView(siteFlow)
+        // Profil kartı: baş harfler, ad, e-posta, liste özeti
+        val all = try { Alarms.load(this) } catch (e: Exception) { emptyList() }
+        val es = wishEntries(all)
+        results.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(surface, 20, line)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener { profileDialog() }
+                addView(label(initials(), 20f, accentOn, true).apply {
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+                }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(14) })
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(profileName().ifEmpty { "Adını ekle" }, 17f, ink, true))
+                    addView(label(profileMail().ifEmpty { "Dokunup ad ve e-posta yaz" }, 13f, muted))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(label("Düzenle", 13f, gold, true))
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(16), 0, 0)
+                fun stat(n: Int, t: String, mode: String) = addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    background = rounded(greyBg, 14)
+                    setPadding(dp(4), dp(10), dp(4), dp(10))
+                    setOnClickListener { if (mode == "home") { homeFilter = "home"; goHome() } else showAlarms(mode) }
+                    addView(label("$n", 20f, ink, true).apply { gravity = Gravity.CENTER })
+                    addView(label(t, 12f, muted).apply { gravity = Gravity.CENTER })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = if (mode != "watch") dp(8) else 0 })
+                stat(es.size, "ürün", "home")
+                stat(es.count { !it.watch }, "alarm", "alarms")
+                stat(es.count { it.watch }, "takip", "watch")
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
 
         // Görünüm
         val look = settingsCard("Görünüm")
@@ -4503,7 +4508,14 @@ class MainActivity : Activity(), MatchLogic {
     /** "alarms": bildirimli alarmlar · "watch": sadece takip (bildirim yok) */
     private var alarmView = "alarms"
 
+    /** Alarmlar / Takip sekmeleri: ana sayfa kartlarının süzülmüş hali */
     private fun showAlarms(mode: String = alarmView) {
+        alarmView = mode
+        homeFilter = if (mode == "watch") "watch" else "alarms"
+        goHome()
+    }
+
+    private fun showAlarmsOld(mode: String = alarmView) {
         if (running) return
         alarmView = mode
         val watchMode = mode == "watch"
@@ -4738,7 +4750,7 @@ class MainActivity : Activity(), MatchLogic {
             Toast.makeText(this, "Paylaşılan yazıda ürün linki yok", Toast.LENGTH_LONG).show()
             return
         }
-        if (screen != "home" && screen != "item") goHome()
+        if (!onList() && screen != "item") goHome()
         status.visibility = View.VISIBLE
         status.text = "Paylaşılan ürün okunuyor…"
         progress.visibility = View.VISIBLE

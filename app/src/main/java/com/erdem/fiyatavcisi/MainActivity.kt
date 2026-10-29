@@ -122,13 +122,13 @@ class MainActivity : Activity(), MatchLogic {
         if (dark) {
             // Loş lacivert (eski Twitter "Dim" teması gibi)
             paper = c("#15202B"); surface = c("#1C2A38"); greyBg = c("#253341"); ink = c("#F2F5F7"); muted = c("#8B98A5")
-            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#2DD4BF"); accentOn = c("#0F1F24"); brand = c("#2DD4BF")
+            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#2DD4BF"); accentOn = c("#0F1F24"); brand = c("#F2C14E")
             // Vurgu rengi: İzci logosunun sarısı (önceden yeşildi)
             green = c("#2DD4BF"); red = c("#F4908A"); orange = c("#F5A962")
             greenBg = c("#123A3A"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#15343A")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
-            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0D9488"); accentOn = c("#FFFFFF"); brand = c("#14B8A6")
+            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0D9488"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
             green = c("#0D9488"); red = c("#B42318"); orange = c("#B54708")
             greenBg = c("#DDF7F3"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#E6FAF7")
         }
@@ -167,7 +167,7 @@ class MainActivity : Activity(), MatchLogic {
     private fun updateNav() {
         if (!::navBar.isInitialized) return
         val cur = when (screen) {
-            "item", "pick" -> homeFilter
+            "item", "pick", "barcode" -> homeFilter
             "settings" -> "profile"
             "results", "product" -> "search"
             else -> screen
@@ -856,6 +856,7 @@ class MainActivity : Activity(), MatchLogic {
             screen == "results" -> goHome(search = true)
             screen == "search" -> goHome()
             screen == "pick" -> { pickFor = null; goHome() }
+            screen == "barcode" -> goHome()
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
@@ -865,6 +866,7 @@ class MainActivity : Activity(), MatchLogic {
         // Arama sürüyorsa durdur: ana sayfada site çipleri ve "taranıyor" yazısı kalmasın
         if (running) { stopAll(); running = false }
         pickFor = null
+        barcodeOnly = false
         progress.visibility = View.GONE
         filterBar.visibility = View.GONE
         chipsScroll.visibility = View.GONE
@@ -1445,20 +1447,32 @@ class MainActivity : Activity(), MatchLogic {
                 (if (homeChecking) " · fiyatlar kontrol ediliyor…" else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
         }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)) })
 
-        // Düğmeler: link yapıştır, yenile
-        val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(2), 0, dp(2), dp(10)) }
+        // Düğmeler: link yapıştır, barkod okut, yenile
+        val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, dp(2), dp(10)) }
         btns.addView(label("+  Link yapıştır", 14f, accentOn, true).apply {
             gravity = Gravity.CENTER
             background = rounded(gold, 22)
-            setPadding(dp(16), dp(11), dp(16), dp(11))
+            setPadding(dp(10), dp(11), dp(10), dp(11))
             setOnClickListener { pasteLink() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        if (list.isNotEmpty()) btns.addView(label(if (homeChecking) "Bakılıyor…" else "↻  Fiyatları yenile", 14f, ink, true).apply {
+        btns.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = rounded(surface, 22, line)
-            setPadding(dp(16), dp(11), dp(16), dp(11))
-            setOnClickListener { refreshList() }
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            setOnClickListener { scanBarcode() }
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_barcode)
+                imageTintList = android.content.res.ColorStateList.valueOf(ink)
+            }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
+            addView(label("Barkod okut", 14f, ink, true))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (list.isNotEmpty()) btns.addView(label(if (homeChecking) "…" else "↻", 20f, ink, true).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Fiyatları yenile"
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(surface); setStroke(dp(1), line) }
+            setOnClickListener { refreshList() }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
 
         results.addView(btns)
 
@@ -1617,14 +1631,14 @@ class MainActivity : Activity(), MatchLogic {
             seller = info?.seller.orEmpty(), sellers = info?.sellers ?: 0)
 
     /** İlanı listedeki karta katar: kart tek linkliyse gruba çevrilir; hedef ve bildirim ayarı kartınkiyle aynı olur */
-    private fun joinGroup(target: Alarm, add: Alarm) {
+    private fun joinGroup(target: Alarm, add: Alarm, quiet: Boolean = false) {
         val all = Alarms.load(this)
         val cur = all.firstOrNull { it.id == target.id } ?: target
         val gid = if (cur.groupId != 0L) cur.groupId else System.currentTimeMillis()
         val members = all.filter { if (cur.groupId != 0L) it.groupId == cur.groupId else it.id == cur.id }
         val name = members.firstOrNull()?.groupName?.ifEmpty { null } ?: cleanTitle(cur.title)
         if (members.any { Links.clean(it.link).substringBefore('?') == Links.clean(add.link).substringBefore('?') }) {
-            Toast.makeText(this, "Bu link zaten bu kartta", Toast.LENGTH_SHORT).show()
+            if (!quiet) Toast.makeText(this, "Bu link zaten bu kartta", Toast.LENGTH_SHORT).show()
             return
         }
         val head = members.first()
@@ -1632,7 +1646,7 @@ class MainActivity : Activity(), MatchLogic {
             add.copy(id = maxOf(System.currentTimeMillis(), (all.maxOfOrNull { it.id } ?: 0L) + 1), groupId = gid, groupName = name,
                 target = head.target, unitTarget = 0.0, unitAmount = 0.0, watch = head.watch, wantStock = head.wantStock)
         Alarms.addGroup(this, items)
-        Toast.makeText(this, "${add.site} linki karta eklendi · ${items.size} link", Toast.LENGTH_SHORT).show()
+        if (!quiet) Toast.makeText(this, "${add.site} linki karta eklendi · ${items.size} link", Toast.LENGTH_SHORT).show()
     }
 
     /** Listedeki kartlardan birini seç (yeni linkin adına en çok benzeyen üstte) */
@@ -1869,6 +1883,173 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private fun restoreScroll(y: Int) { resultsScroll.post { resultsScroll.scrollTo(0, y) } }
+
+
+    // ---------- Barkod okut: sadece barkodu tutan ilanlar ----------
+
+    /** Barkod aramasındayken: tahmin yok, isimle aramaya geçilmez */
+    private var barcodeOnly = false
+    private var barcodeCode = ""
+    private val barcodePicked = mutableSetOf<String>()
+
+    private fun barcodeSearch(code: String) {
+        if (running) return
+        stopAll()
+        barcodeOnly = true
+        barcodeCode = code
+        pickFor = null
+        barcodePicked.clear()
+        running = true
+        finished = false
+        startedAt = android.os.SystemClock.elapsedRealtime()
+        offers.clear(); siteSummary.clear(); barcodeHits.clear(); weakSites.clear()
+        identity = null
+        query = code
+        userInput = code
+        bookMode = code.length == 13 && (code.startsWith("978") || code.startsWith("979"))
+        if (resultsScroll.visibility != View.VISIBLE) toggleBrowser()
+        progress.visibility = View.VISIBLE
+        chipsScroll.visibility = View.VISIBLE
+        status.visibility = View.GONE
+        renderBarcode(false)
+        val myStart = startedAt
+        handler.postDelayed({ if (startedAt == myStart && running && barcodeOnly) finishBarcode() }, 40000)
+        runSites(sites, code, "Barkod", onEach = { if (barcodeOnly) renderBarcode(false) }, noSimple = true, hardMs = 30000) {
+            if (barcodeOnly) finishBarcode()
+        }
+    }
+
+    private fun finishBarcode() {
+        if (finished) return
+        finished = true
+        running = false
+        stopAll()
+        progress.visibility = View.GONE
+        chipsScroll.visibility = View.GONE
+        val hits = barcodeResults()
+        barcodePicked.clear()
+        barcodePicked.addAll(hits.map { offerKey(it) })
+        renderBarcode(true)
+    }
+
+    /**
+     * Barkodu tutan ilanlar. Kurallar:
+     *  - Barkodla az ilan (1-4) döndüren site: o ilanlar ürünün kendisidir
+     *  - Çok ilan döndüren site öneri listesi göstermiş olabilir: sadece ortak adı taşıyanlar kalır
+     *  - Aksesuar atılır; birden çok site varsa çoğunluğun adıyla hiç ortak kelimesi olmayan ilan atılır
+     */
+    private fun barcodeResults(): List<Offer> {
+        val bySite = offers.filter { it.price > 0 && !isAccessory(it.title.lowercase(Locale("tr", "TR"))) }.groupBy { it.site }
+        val kept = mutableListOf<Offer>()
+        for ((_, list) in bySite) {
+            if (list.size <= 4) { kept.addAll(list); continue }
+            val common = commonName(list.map { it.title })
+            if (common.isEmpty()) continue
+            val cw = words(common)
+            kept.addAll(list.filter { (words(it.title) intersect cw).size * 2 >= cw.size }.take(4))
+        }
+        if (kept.map { it.site }.distinct().size >= 2) {
+            // Çoğunluğun kelimeleri: en az iki sitede geçen kelimeler
+            val freq = HashMap<String, Int>()
+            kept.groupBy { it.site }.values.forEach { l -> l.flatMap { words(it.title) }.toSet().forEach { w -> freq[w] = (freq[w] ?: 0) + 1 } }
+            val core = freq.filter { it.value >= 2 && it.key.length >= 3 }.keys
+            if (core.size >= 2) kept.retainAll { (words(it.title) intersect core).size >= 2 }
+        }
+        return kept.distinctBy { offerKey(it) }.sortedBy { it.price }
+    }
+
+    private fun renderBarcode(final: Boolean) {
+        screen = "barcode"
+        filterBar.visibility = View.GONE
+        searchBar.visibility = View.GONE
+        updateSiteChips()
+        results.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(16)) }
+        results.addView(col)
+        col.addView(label("‹  Listem", 14f, gold, true).apply {
+            setPadding(0, dp(6), 0, dp(10))
+            setOnClickListener { if (running) { stopAll(); running = false }; barcodeOnly = false; goHome() }
+        })
+        col.addView(label("Barkod $barcodeCode", 22f, ink, true))
+        val hits = if (final) barcodeResults() else barcodeResults()
+        if (!final) {
+            col.addView(label("Siteler taranıyor… " + (if (hits.isNotEmpty()) "${hits.size} ilan bulundu" else ""), 14f, muted)
+                .apply { setPadding(0, dp(10), 0, dp(6)) })
+            hits.forEach { barcodeRow(col, it, false) }
+            return
+        }
+        if (hits.isEmpty()) {
+            col.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = rounded(surface, 18, line)
+                setPadding(dp(18), dp(22), dp(18), dp(20))
+                addView(label("Bu barkod sitelerde bulunamadı", 17f, ink, true).apply { gravity = Gravity.CENTER })
+                addView(label("Hiçbir site bu barkodla ilan döndürmedi. Tahmin yapmıyorum; yanlış ürün göstermektense boş bırakıyorum. " +
+                    "Ürünü bir sitede bulursan linkini paylaşarak ekleyebilirsin.", 13f, muted)
+                    .apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(14)) })
+                addView(label("Başka barkod okut", 14f, accentOn, true).apply {
+                    background = rounded(gold, 22)
+                    setPadding(dp(22), dp(11), dp(22), dp(11))
+                    setOnClickListener { barcodeOnly = false; scanBarcode() }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+            return
+        }
+        val siteCount = hits.map { it.site }.distinct().size
+        col.addView(label("${hits.size} ilan · $siteCount site · en ucuz ${money(hits.first().price)} (${hits.first().site})", 14f, green, true)
+            .apply { setPadding(0, dp(8), 0, 0) })
+        col.addView(label("Barkodu tutan ilanlar. Listene eklemek istemediklerinin işaretini kaldır.", 12f, muted)
+            .apply { setPadding(0, dp(4), 0, dp(4)) })
+        hits.forEach { barcodeRow(col, it, true) }
+        val chosen = hits.filter { offerKey(it) in barcodePicked }
+        col.addView(label(if (chosen.isEmpty()) "Bir ilan seç" else "Listeme ekle (${chosen.size} ilan)", 15f,
+            if (chosen.isEmpty()) muted else accentOn, true).apply {
+            gravity = Gravity.CENTER
+            background = if (chosen.isEmpty()) rounded(surface, 24, line) else rounded(gold, 24)
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            setOnClickListener {
+                if (chosen.isEmpty()) return@setOnClickListener
+                val main = chosen.first()
+                alarmDialog(cleanTitle(main.title), main.link, main.site, main.image, main.price, true,
+                    compareName = "", extras = chosen.drop(1))
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+    }
+
+    private fun barcodeRow(col: LinearLayout, o: Offer, selectable: Boolean) {
+        val key = offerKey(o)
+        val on = selectable && key in barcodePicked
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            if (selectable) setOnClickListener { if (on) barcodePicked.remove(key) else barcodePicked.add(key); renderBarcode(true) }
+            addView(ImageView(this@MainActivity).apply {
+                background = rounded(Color.WHITE, 8)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                if (o.image.isNotEmpty()) loadImage(o.image, this, Uri.parse(o.link).let { u -> "${u.scheme}://${u.host}/" })
+            }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(10) })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(o.title, 13f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(4), 0, 0)
+                    addView(sitePill(o))
+                    addView(label("  " + money(o.price), 15f, ink, true))
+                })
+                addView(label("Sayfayı aç ›", 11f, muted).apply { setPadding(0, dp(4), 0, 0); setOnClickListener { openLink(o) } })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (selectable) addView(label(if (on) "✓" else "", 18f, accentOn, true).apply {
+                gravity = Gravity.CENTER
+                background = if (on) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+                    else GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), muted) }
+            }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+    }
 
     /** Listedeki ürünü seçilen ilanlarla tek grup yapar (hedef ve bildirim ayarı korunur) */
     private fun addPicked(a: Alarm, chosen: List<Offer>) {
@@ -2140,7 +2321,7 @@ class MainActivity : Activity(), MatchLogic {
                          hardMs: Long = 25000, onAll: () -> Unit) {
         // Ayarlardan kapatılan siteler ve aramanın kategorisiyle ilgisi olmayan siteler taranmaz
         val cat = detectCategory()
-        val list = all.filter { siteOn(it.name) && (it.cats.isEmpty() || cat in it.cats) }
+        val list = all.filter { siteOn(it.name) && (barcodeOnly || it.cats.isEmpty() || cat in it.cats) }
         scanSites = list.map { it.name }.toSet()
         if (list.isEmpty()) {
             siteSummary.add("Hiçbir site açık değil (Ayarlar → Siteler)")
@@ -2287,6 +2468,7 @@ class MainActivity : Activity(), MatchLogic {
         pickFor = pendingPick
         pendingPick = null
         showAllResults = false
+        barcodeOnly = false
         userInput = input.text.toString().trim()
         if (userInput.isEmpty()) return
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
@@ -3134,6 +3316,7 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private fun render(final: Boolean) {
+        if (barcodeOnly) { renderBarcode(final); return }
         if (pickFor != null) { renderPicker(final); return }
         screen = "results"
         prepareResults()
@@ -4330,7 +4513,7 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     private fun alarmDialog(title: String, link: String, site: String, image: String, price: Double?, available: Boolean?,
-                            offer: Offer? = null, replaceGroup: Long = 0L, compareName: String? = null) {
+                            offer: Offer? = null, replaceGroup: Long = 0L, compareName: String? = null, extras: List<Offer> = emptyList()) {
         val unit = offer?.let { offerUnit(it) }
         val group = offer?.let { groupCandidates(it) }.orEmpty()
         val box = LinearLayout(this).apply {
@@ -4459,14 +4642,20 @@ class MainActivity : Activity(), MatchLogic {
                     Toast.makeText(this, "Listene eklendi: ${items.size} sitede izleniyor", Toast.LENGTH_SHORT).show()
                 } else {
                     val p = price ?: 0.0
+                    val newId = existing?.id ?: System.currentTimeMillis()
                     Alarms.add(this, Alarm(
-                        id = existing?.id ?: System.currentTimeMillis(), title = title, site = site, link = link, image = image,
+                        id = newId, title = title, site = site, link = Links.clean(link), image = image,
                         startPrice = existing?.startPrice ?: p, lastPrice = p, lowest = if (p > 0) p else 0.0,
                         target = if (byUnit) 0.0 else t, wantStock = stock.isChecked, inStock = available,
                         lastCheck = 0L, status = "henüz kontrol edilmedi",
                         unitAmount = if (unit != null) unit.first else 0.0, unitName = unit?.second.orEmpty(),
                         unitTarget = if (byUnit) t else 0.0, watch = watchOnly,
                     ))
+                    // Barkoddan seçilen diğer siteler: aynı karta
+                    extras.forEach { x ->
+                        Alarms.load(this).firstOrNull { it.id == newId || (it.groupId != 0L && Alarms.load(this).any { m -> m.id == newId && m.groupId == it.groupId }) }
+                            ?.let { tgt -> joinGroup(tgt, newListing(x.title, x.link, x.site, x.image, x.price, true, null), quiet = true) }
+                    }
                     Toast.makeText(this, if (existing != null) "Güncellendi" else if (watchOnly) "Takibe alındı" else "Alarm kuruldu", Toast.LENGTH_SHORT).show()
                 }
                 if (!watchOnly) askNotificationPermission()
@@ -4732,7 +4921,8 @@ class MainActivity : Activity(), MatchLogic {
                     val raw = (b.rawValue ?: "").trim()
                     when {
                         raw.startsWith("http") -> handleSharedText(raw)
-                        raw.isNotEmpty() -> Toast.makeText(this, "Kodda link yok", Toast.LENGTH_SHORT).show()
+                        raw.replace(" ", "").let { c -> c.length in 8..14 && c.all { it.isDigit() } } -> barcodeSearch(raw.replace(" ", ""))
+                        raw.isNotEmpty() -> Toast.makeText(this, "Bu kod bir ürün barkodu değil", Toast.LENGTH_SHORT).show()
                     }
                 }
                 .addOnFailureListener { e ->

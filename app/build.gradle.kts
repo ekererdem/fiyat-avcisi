@@ -11,8 +11,8 @@ android {
         applicationId = "com.erdem.fiyatavcisi"
         minSdk = 26
         targetSdk = 34
-        versionCode = 111
-        versionName = "1.11"
+        versionCode = 112
+        versionName = "1.12"
     }
 
     // Sabit imza: yeni sürümler eskisinin üstüne kaldırmadan kurulsun diye

@@ -1512,7 +1512,26 @@ class MainActivity : Activity(), MatchLogic {
         })
         info.addView(priceRow)
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        // Sağ üst: alarm açık/kapalı (kapalıyken sadece takip)
+        // Sağ üst: takip (dokununca takipten çıkarma sorusu) ve alarm açık/kapalı
+        row.addView(FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greenBg) }
+            contentDescription = "Takipten çıkar"
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Takipten çıkılsın mı?")
+                    .setMessage("“${e.title.take(60)}” listenden silinecek; fiyat geçmişi de izlenmeyecek. Emin misin?")
+                    .setPositiveButton("Evet, çıkar") { _, _ ->
+                        if (e.gid != 0L) Alarms.removeGroup(this@MainActivity, e.gid) else Alarms.remove(this@MainActivity, a.id)
+                        Toast.makeText(this@MainActivity, "Takipten çıkarıldı", Toast.LENGTH_SHORT).show()
+                        showHome()
+                    }
+                    .setNegativeButton("Vazgeç", null).show()
+            }
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_watch)
+                imageTintList = android.content.res.ColorStateList.valueOf(gold)
+            }, FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER })
+        }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8) })
         row.addView(FrameLayout(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (e.watch) greyBg else gold) }
             contentDescription = if (e.watch) "Alarmı aç" else "Alarmı kapat"

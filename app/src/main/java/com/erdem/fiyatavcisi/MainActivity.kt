@@ -1681,7 +1681,10 @@ class MainActivity : Activity(), MatchLogic {
         val head = members.first()
         val items = members.map { it.copy(groupId = gid, groupName = name) } +
             add.copy(id = maxOf(System.currentTimeMillis(), (all.maxOfOrNull { it.id } ?: 0L) + 1), groupId = gid, groupName = name,
-                target = head.target, unitTarget = 0.0, unitAmount = 0.0, watch = head.watch, wantStock = head.wantStock)
+                target = head.target, unitTarget = head.unitTarget,
+                unitAmount = if (head.unitTarget > 0) listingUnit(add)?.third ?: 0.0 else 0.0,
+                unitName = if (head.unitTarget > 0) listingUnit(add)?.second ?: head.unitName else "",
+                watch = head.watch, wantStock = head.wantStock)
         Alarms.addGroup(this, items)
         if (!quiet) Toast.makeText(this, "${add.site} linki karta eklendi · ${items.size} link", Toast.LENGTH_SHORT).show()
     }
@@ -4181,33 +4184,74 @@ class MainActivity : Activity(), MatchLogic {
         }
         // Alarm kur: hedef fiyat sorulur; alarm varsa hedef değiştirilir ya da alarm silinir
         act(R.drawable.ic_bell, if (a.watch) "Alarm kur" else "Alarm var", !a.watch) {
-            val unit = a.unitAmount > 0
+            // Adetli ürün mü: karttaki linklerin çoğunda paket miktarı okunuyorsa adet başı hedef seçilebilir
+            val units = items.associate { it.id to listingUnit(it) }
+            val unitOk = units.values.count { it != null } * 2 >= items.size && units.values.any { it != null }
+            val uName = units.values.filterNotNull().firstOrNull()?.second ?: "adet"
+            var byUnit = unitOk && (a.unitTarget > 0 || a.target <= 0)
             val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
-            val cur = if (unit) a.unitPrice() else a.lastPrice.takeIf { it > 0 }
-            if (cur != null) box.addView(label("Şu an: " + (if (unit) Alarms.unitText(cur, a.unitName) else money(cur)), 13f, muted))
+            val bestTotal = items.mapNotNull { it.lastPrice.takeIf { p -> p > 0 } }.minOrNull()
+            val bestUnit = units.values.filterNotNull().minOfOrNull { it.first }
+            val curLabel = label("", 13f, muted)
+            box.addView(curLabel)
             val tIn = EditText(this).apply {
-                hint = if (unit) "Hedef (TL/${a.unitName})" else "Hedef fiyat (TL)"
                 inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-                val t0 = if (unit) a.unitTarget else a.target
-                if (!a.watch && t0 > 0) setText(Alarms.unitText(t0, "").substringBefore(" TL"))
+                setSingleLine()
             }
+            val help = label("", 12f, muted).apply { setPadding(0, dp(4), 0, 0) }
+            fun paint() {
+                curLabel.text = "Şu an en uygun: " + if (byUnit && bestUnit != null) Alarms.unitText(bestUnit, uName) else bestTotal?.let { money(it) } ?: "?"
+                tIn.hint = if (byUnit) "Hedef ${uName} fiyatı (TL/$uName)" else "Hedef toplam fiyat (TL)"
+                help.text = if (byUnit) "Hangi paket olursa olsun ${uName} başına bu fiyatın altına inince haber veririm. Boş bırakırsan her ucuzlamada."
+                    else "Boş bırakırsan her ucuzlamada haber veririm."
+            }
+            if (unitOk) {
+                val seg = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(4)) }
+                val opts = listOf("${uName.replaceFirstChar { it.uppercase() }} fiyatı", "Toplam fiyat")
+                val views = opts.mapIndexed { i, t ->
+                    label(t, 14f, ink, true).apply {
+                        gravity = Gravity.CENTER
+                        setPadding(dp(8), dp(10), dp(8), dp(10))
+                    }.also { v -> seg.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i == 0) marginEnd = dp(8) }) }
+                }
+                fun paintSeg() = views.forEachIndexed { i, v ->
+                    val on = (i == 0) == byUnit
+                    v.background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
+                    v.setTextColor(if (on) green else ink)
+                }
+                views.forEachIndexed { i, v -> v.setOnClickListener { byUnit = i == 0; tIn.setText(""); paintSeg(); paint() } }
+                paintSeg()
+                box.addView(seg, 0)
+            }
+            val t0 = if (byUnit) a.unitTarget else a.target
+            if (!a.watch && t0 > 0) tIn.setText(Alarms.unitText(t0, "").substringBefore(" TL"))
             box.addView(tIn)
-            box.addView(label("Boş bırakırsan her ucuzlamada haber veririm.", 12f, muted).apply { setPadding(0, dp(4), 0, 0) })
+            box.addView(help)
+            paint()
             AlertDialog.Builder(this).setTitle(if (a.watch) "Fiyat alarmı kur" else "Alarm")
                 .setView(box)
                 .setPositiveButton("Kaydet") { _, _ ->
-                    val t = tIn.text.toString().replace(".", "").replace(",", ".").toDoubleOrNull() ?: 0.0
+                    val t = parseTl(tIn.text.toString())
                     Alarms.save(this, Alarms.load(this).map {
-                        if (it.id in ids) it.copy(watch = false, target = if (unit) 0.0 else t, unitTarget = if (unit) t else 0.0) else it
+                        if (it.id !in ids) it
+                        else if (byUnit) {
+                            val u = units[it.id]
+                            it.copy(watch = false, target = 0.0, unitTarget = t, unitAmount = u?.third ?: 0.0, unitName = u?.second ?: uName)
+                        } else it.copy(watch = false, target = t, unitTarget = 0.0, unitAmount = 0.0, unitName = "")
                     })
+                    // Ürün alarmının önceki en iyi değeri eski ölçüye göreydi: sıfırla
+                    if (gid != 0L) getSharedPreferences("alarms", Context.MODE_PRIVATE).edit().remove("gbest_$gid").apply()
+                    // Ölçü değiştiyse (toplam ↔ adet) ürünün en uygun fiyat geçmişi karışmasın
+                    if (gid != 0L && byUnit != (a.unitTarget > 0 || a.unitAmount > 0)) getSharedPreferences("history", Context.MODE_PRIVATE).edit().remove("g:$gid").apply()
                     askNotificationPermission()
-                    Toast.makeText(this, "Alarm kuruldu", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Alarm kuruldu" + if (t > 0) " · hedef " + (if (byUnit) Alarms.unitText(t, uName) else money(t)) else "", Toast.LENGTH_SHORT).show()
                     alarmPage(gid, a.id)
                 }
                 .apply {
-                    if (!a.watch) setNeutralButton("Alarmı sil") { _, _ ->
-                        if (gid != 0L) Alarms.removeGroup(this@MainActivity, gid) else Alarms.remove(this@MainActivity, a.id)
-                        itemGoBack()
+                    if (!a.watch) setNeutralButton("Alarmı kapat") { _, _ ->
+                        Alarms.save(this@MainActivity, Alarms.load(this@MainActivity).map { if (it.id in ids) it.copy(watch = true) else it })
+                        Toast.makeText(this@MainActivity, "Alarm kapatıldı · takip sürüyor", Toast.LENGTH_SHORT).show()
+                        alarmPage(gid, a.id)
                     }
                 }
                 .setNegativeButton("Vazgeç", null).show()
@@ -4807,6 +4851,16 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     /** İlanın birim bölümü: birim fiyat = fiyat / bölüm ("216 adet" -> 216, "200 g" -> 0,2 kg) */
+    /** "1.499,90" / "15,5" / "15.5" / "1500" → sayı */
+    private fun parseTl(x: String): Double {
+        val t = x.trim().replace(" ", "")
+        return when {
+            t.contains(',') -> t.replace(".", "").replace(",", ".").toDoubleOrNull()
+            Regex("^\\d{1,3}(\\.\\d{3})+$").matches(t) -> t.replace(".", "").toDoubleOrNull()
+            else -> t.toDoubleOrNull()
+        } ?: 0.0
+    }
+
     /** Kayıtlı ilanın paketi: (birim fiyat, birim, paket miktarı); adı miktar yazmıyorsa null */
     private fun listingUnit(a: Alarm, price: Double = a.lastPrice): Triple<Double, String, Double>? {
         if (price <= 0) return null

@@ -122,15 +122,15 @@ class MainActivity : Activity(), MatchLogic {
         if (dark) {
             // Loş lacivert (eski Twitter "Dim" teması gibi)
             paper = c("#15202B"); surface = c("#1C2A38"); greyBg = c("#253341"); ink = c("#F2F5F7"); muted = c("#8B98A5")
-            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#2DD4BF"); accentOn = c("#0F1F24"); brand = c("#F2C14E")
+            hintColor = c("#66768A"); line = c("#2F3E4E"); gold = c("#3DDC97"); accentOn = c("#06251A"); brand = c("#F2C14E")
             // Vurgu rengi: İzci logosunun sarısı (önceden yeşildi)
-            green = c("#2DD4BF"); red = c("#F4908A"); orange = c("#F5A962")
-            greenBg = c("#123A3A"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#15343A")
+            green = c("#3DDC97"); red = c("#F4908A"); orange = c("#F5A962")
+            greenBg = c("#123A2C"); redBg = c("#3A2330"); orangeBg = c("#3A2E26"); amberBg = c("#15362B")
         } else {
             paper = c("#FFFFFF"); surface = c("#FFFFFF"); greyBg = c("#F2F2F2"); ink = c("#111111"); muted = c("#6B6B6B")
-            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0D9488"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
-            green = c("#0D9488"); red = c("#B42318"); orange = c("#B54708")
-            greenBg = c("#DDF7F3"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#E6FAF7")
+            hintColor = c("#9A9A9A"); line = c("#E8E8E8"); gold = c("#0E9F6E"); accentOn = c("#FFFFFF"); brand = c("#F2C14E")
+            green = c("#0E9F6E"); red = c("#B42318"); orange = c("#B54708")
+            greenBg = c("#DFF7EC"); redBg = c("#FDECEA"); orangeBg = c("#FDF0E3"); amberBg = c("#E8FAF1")
         }
     }
 

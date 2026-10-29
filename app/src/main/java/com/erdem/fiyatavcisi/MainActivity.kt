@@ -1982,6 +1982,7 @@ class MainActivity : Activity(), MatchLogic {
         stopAll()
         barcodeOnly = true
         pickFilter = ""
+        pickCache = null
         wordQuery = if (words) code else ""
         barcodeCode = code
         pickFor = null
@@ -2064,7 +2065,7 @@ class MainActivity : Activity(), MatchLogic {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
         })
         // Sonuçlarda ara: yazılan kelimeler ilan adında ya da site adında geçmeli
-        if (final && (barcodeResults().size + (if (wordMode) wordResults().second.size else 0)) > 3) {
+        if (final && pickResults(true).let { it.first.size + it.second.size } > 3) {
             col.addView(EditText(this).apply {
                 hint = "Sonuçlarda ara: 93, hepsiburada, külot…"
                 setSingleLine()
@@ -2113,11 +2114,32 @@ class MainActivity : Activity(), MatchLogic {
         return f.all { w -> if (w.any { it.isDigit() }) w in toks || "n$w" in toks else t.contains(w) }
     }
 
+    /** Arama bitince sonuçlar bir kez hesaplanır; tik atarken yeniden hesaplanmaz */
+    private var pickCache: Pair<List<Offer>, List<Offer>>? = null
+    private var pickButton: TextView? = null
+    private var pickAll: List<Offer> = emptyList()
+
+    private fun pickResults(final: Boolean): Pair<List<Offer>, List<Offer>> {
+        if (final) pickCache?.let { return it }
+        val r = if (wordQuery.isNotEmpty()) wordResults() else barcodeResults() to emptyList()
+        if (final) pickCache = r
+        return r
+    }
+
+    /** Alttaki "Listeme ekle" düğmesini seçime göre günceller (listeyi yeniden çizmeden) */
+    private fun paintPickButton() {
+        val b = pickButton ?: return
+        val n = pickAll.count { offerKey(it) in barcodePicked }
+        b.text = if (n == 0) "Bir ilan seç" else "Listeme ekle ($n ilan)"
+        b.setTextColor(if (n == 0) muted else accentOn)
+        b.background = if (n == 0) rounded(surface, 24, line) else rounded(gold, 24)
+    }
+
     private fun fillPickBody(col: LinearLayout, final: Boolean) {
         col.removeAllViews()
         val wordMode = wordQuery.isNotEmpty()
-        val allHits = barcodeResults()
-        val allNear = if (wordMode) wordResults().second else emptyList()
+        val (allHits, allNear) = pickResults(final)
+        pickAll = allHits + allNear
         val hits = allHits.filter { pickPasses(it) }
         val near = allNear.filter { pickPasses(it) }
         if (final && pickFilter.isNotBlank()) col.addView(label("Süzgeç: ${hits.size + near.size}/${allHits.size + allNear.size} ilan", 12f, gold, true)
@@ -2163,39 +2185,68 @@ class MainActivity : Activity(), MatchLogic {
                 wordMode -> "Ucuzdan pahalıya. Listene eklemek istediklerini işaretle."
                 else -> "Barkodu tutan ilanlar. Listene eklemek istemediklerinin işaretini kaldır."
             }, 12f, muted).apply { setPadding(0, dp(4), 0, dp(4)) })
+            selectAllRow(col, hits)
             hits.forEach { barcodeRow(col, it, true) }
         }
         if (near.isNotEmpty()) {
             col.addView(label("Bir kelimesi eksik (${near.size})", 15f, orange, true).apply { setPadding(0, dp(20), 0, 0) })
             col.addView(label("Adında yazdığın kelimelerden biri geçmiyor; aynı ürün olabilir de olmayabilir de. Bakıp sen karar ver.", 12f, muted)
                 .apply { setPadding(0, dp(2), 0, dp(4)) })
+            selectAllRow(col, near)
             near.forEach { barcodeRow(col, it, true, missing = wordMissing(it).firstOrNull { w -> w !in genericWords }) }
         }
         // Süzgeçle gizlenen ama seçili kalan ilanlar da eklenir
-        val chosen = (allHits + allNear).filter { offerKey(it) in barcodePicked }
-        col.addView(label(if (chosen.isEmpty()) "Bir ilan seç" else "Listeme ekle (${chosen.size} ilan)", 15f,
-            if (chosen.isEmpty()) muted else accentOn, true).apply {
+        col.addView(label("", 15f, accentOn, true).apply {
             gravity = Gravity.CENTER
-            background = if (chosen.isEmpty()) rounded(surface, 24, line) else rounded(gold, 24)
             setPadding(dp(16), dp(13), dp(16), dp(13))
+            pickButton = this
             setOnClickListener {
+                val chosen = pickAll.filter { offerKey(it) in barcodePicked }
                 if (chosen.isEmpty()) return@setOnClickListener
                 val main = chosen.first()
                 alarmDialog(cleanTitle(main.title), main.link, main.site, main.image, main.price, true,
                     compareName = "", extras = chosen.drop(1))
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+        paintPickButton()
+    }
+
+    /** "Tümünü seç / Seçimi kaldır": görünen (süzgeçten geçen) ilanlar için */
+    private fun selectAllRow(col: LinearLayout, list: List<Offer>) {
+        if (list.size < 2) return
+        val keys = list.map { offerKey(it) }
+        val allOn = keys.all { it in barcodePicked }
+        col.addView(label(if (allOn) "Seçimi kaldır (${list.size})" else "Tümünü seç (${list.size})", 14f, gold, true).apply {
+            gravity = Gravity.END
+            setPadding(dp(8), dp(6), dp(4), dp(2))
+            setOnClickListener {
+                if (allOn) barcodePicked.removeAll(keys.toSet()) else barcodePicked.addAll(keys)
+                pickBody?.let { fillPickBody(it, true) }
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     private fun barcodeRow(col: LinearLayout, o: Offer, selectable: Boolean, missing: String? = null) {
         val key = offerKey(o)
         val on = selectable && key in barcodePicked
+        val check = label(if (on) "✓" else "", 18f, accentOn, true).apply { gravity = Gravity.CENTER }
+        fun paintCheck(row: View, v: Boolean) {
+            row.background = rounded(if (v) greenBg else surface, 14, if (v) gold else line, if (v) 2 else 1)
+            check.text = if (v) "✓" else ""
+            check.background = if (v) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+                else GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), muted) }
+        }
         col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(if (on) greenBg else surface, 14, if (on) gold else line, if (on) 2 else 1)
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            if (selectable) setOnClickListener { if (on) barcodePicked.remove(key) else barcodePicked.add(key); pickBody?.let { fillPickBody(it, true) } ?: renderBarcode(true) }
+            paintCheck(this, on)
+            if (selectable) setOnClickListener {
+                val nowOn = key !in barcodePicked
+                if (nowOn) barcodePicked.add(key) else barcodePicked.remove(key)
+                paintCheck(this, nowOn)
+                paintPickButton()
+            }
             addView(ImageView(this@MainActivity).apply {
                 background = rounded(Color.WHITE, 8)
                 scaleType = ImageView.ScaleType.FIT_CENTER
@@ -2217,11 +2268,7 @@ class MainActivity : Activity(), MatchLogic {
                 if (missing != null) addView(label("“$missing” geçmiyor", 11f, orange, true).apply { setPadding(0, dp(3), 0, 0) })
                 addView(label("Sayfayı aç ›", 11f, muted).apply { setPadding(0, dp(4), 0, 0); setOnClickListener { openLink(o) } })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (selectable) addView(label(if (on) "✓" else "", 18f, accentOn, true).apply {
-                gravity = Gravity.CENTER
-                background = if (on) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
-                    else GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), muted) }
-            }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+            if (selectable) addView(check, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
 

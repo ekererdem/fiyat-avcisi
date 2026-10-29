@@ -4282,9 +4282,27 @@ class MainActivity : Activity(), MatchLogic {
                         addView(label(if (x.lastPrice > 0) money(x.lastPrice) else "?", 15f, if (i == 0) green else ink, true).apply { gravity = Gravity.END })
                         if (u != null) addView(label(Alarms.unitText(u.first, u.second), 11f, if (byUnit) ink else muted, byUnit).apply { gravity = Gravity.END })
                     })
+                    // Bu linki karttan çıkar
+                    addView(label("✕", 16f, muted, true).apply {
+                        gravity = Gravity.CENTER
+                        contentDescription = "Bu linki karttan çıkar"
+                        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greyBg) }
+                        setOnClickListener {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Bu link çıkarılsın mı?")
+                                .setMessage("${x.site} · ${x.title.take(70)}\n\nSadece bu link karttan çıkar, diğerleri izlenmeye devam eder.")
+                                .setPositiveButton("Çıkar") { _, _ ->
+                                    Alarms.remove(this@MainActivity, x.id)
+                                    val rest = Alarms.load(this@MainActivity).filter { it.groupId == gid }
+                                    Toast.makeText(this@MainActivity, "Link çıkarıldı · ${rest.size} link kaldı", Toast.LENGTH_SHORT).show()
+                                    if (rest.isEmpty()) goHome() else alarmPage(gid, if (x.id == a.id) rest.first().id else a.id)
+                                }
+                                .setNegativeButton("Vazgeç", null).show()
+                        }
+                    }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(8) })
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
             }
-            col.addView(label("Dokun: bu linke geç · uzun bas: sitede aç ya da karttan çıkar", 11f, muted).apply {
+            col.addView(label("Dokun: bu linke geç · ✕: linki karttan çıkar · uzun bas: sitede aç", 11f, muted).apply {
                 gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
@@ -4770,8 +4788,15 @@ class MainActivity : Activity(), MatchLogic {
     private fun offerUnit(o: Offer): Pair<Double, String>? {
         if (isSet(o)) return null
         val a = amountOf(o.title, queryAmount?.unit) ?: return null
-        val total = a.total
+        var total = a.total
         if (total <= 0) return null
+        // "210 Adet (6 x 35 Adet)": toplam ve paket içeriği birlikte yazılınca çarpılıp 7350 sayılmasın
+        if (a.unit != "g" && a.unit != "ml") {
+            val ns = Regex("(\\d+)\\s*(?:adet|'?l[iıuü]\\b|pcs|parça)", RegexOption.IGNORE_CASE).findAll(o.title)
+                .mapNotNull { it.groupValues[1].toDoubleOrNull() }.filter { it > 0 }.toList()
+            for (x in ns) for (y in ns) if (x * y == total && maxOf(x, y) < total) total = maxOf(x, y)
+            if (total != a.total) ns.maxOrNull()?.let { if (it > total) total = it }
+        }
         return when (a.unit) {
             "g" -> total / 1000 to "kg"
             "ml" -> total / 1000 to "L"

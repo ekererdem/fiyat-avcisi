@@ -1367,7 +1367,10 @@ class MainActivity : Activity(), MatchLogic {
     private fun wishEntries(all: List<Alarm>): List<WishEntry> {
         val out = mutableListOf<WishEntry>()
         for ((gid, items) in all.filter { it.groupId != 0L }.groupBy { it.groupId }) {
-            val best = Alarms.groupBest(items) ?: items.first()
+            // Paketler farklıysa (35'li, 93'lü…) en uygun = adet fiyatı en düşük olan
+            val us = items.mapNotNull { x -> listingUnit(x)?.let { x to it.first } }
+            val best = (if (us.size * 2 >= items.size && us.isNotEmpty()) us.minByOrNull { it.second }?.first else null)
+                ?: Alarms.groupBest(items) ?: items.first()
             val unit = best.unitTarget > 0 || best.unitAmount > 0
             val p = Alarms.metric(best)
             val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
@@ -4016,37 +4019,45 @@ class MainActivity : Activity(), MatchLogic {
         act(R.drawable.ic_share, "Link ekle", false) { attachFromClipboard(a) }
         col.addView(acts)
 
-        // Fiyat geçmişi
+        // Fiyat geçmişi: veri yoksa tek satır
         fun historyBlock(title: String, pts: List<Pair<Long, Double>>, fmt: (Double) -> String) {
             col.addView(label(title, 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(6)) })
-            if (pts.size >= 2) {
-                col.addView(Sparkline(this, pts, green, line), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
-                val days = (History.today() - pts.first().first + 1).toInt()
-                col.addView(label("Son $days gün · en düşük ${fmt(pts.minOf { it.second })} · en yüksek ${fmt(pts.maxOf { it.second })}", 12f, muted)
-                    .apply { setPadding(0, dp(4), 0, 0) })
-            } else col.addView(label("Grafik ikinci günden sonra çıkar; fiyat her kontrolde günlük kaydediliyor.", 13f, muted))
+            col.addView(Sparkline(this, pts, green, line), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+            val days = (History.today() - pts.first().first + 1).toInt()
+            col.addView(label("Son $days gün · en düşük ${fmt(pts.minOf { it.second })} · en yüksek ${fmt(pts.maxOf { it.second })}", 12f, muted)
+                .apply { setPadding(0, dp(4), 0, 0) })
         }
-        if (gid != 0L) {
-            val unit = a.unitAmount > 0
-            historyBlock("Ürünün en uygun fiyatı", History.get(this, "g:$gid")) { v -> if (unit) Alarms.unitText(v, a.unitName) else money(v) }
+        val gh = if (gid != 0L) History.get(this, "g:$gid") else emptyList()
+        val oh = History.offer(this, a.link)
+        if (gh.size >= 2) historyBlock("Ürünün en uygun fiyatı", gh) { v -> if (a.unitAmount > 0) Alarms.unitText(v, a.unitName) else money(v) }
+        if (oh.size >= 2) historyBlock(if (gid != 0L) "Bu linkin fiyatı (${a.site})" else "Fiyat geçmişi", oh) { money(it) }
+        if (gh.size < 2 && oh.size < 2) {
+            col.addView(label("Fiyat geçmişi", 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(4)) })
+            col.addView(label("Grafik ikinci günden sonra çıkar.", 13f, muted))
         }
-        historyBlock(if (gid != 0L) "Bu ilanın fiyatı (${a.site})" else "Fiyat geçmişi", History.offer(this, a.link)) { money(it) }
 
-        // Ürün alarmında diğer siteler
+        // Karttaki bütün linkler: paket farklıysa adet fiyatına göre sıralı
         if (items.size > 1) {
-            col.addView(label("Bütün siteler", 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(4)) })
-            val unit = a.unitAmount > 0
-            items.sortedBy { Alarms.metric(it) ?: Double.MAX_VALUE }.forEach { x ->
+            val units = items.associate { it.id to listingUnit(it) }
+            val byUnit = units.values.count { it != null } * 2 >= items.size
+            val sorted = if (byUnit) items.sortedBy { units[it.id]?.first ?: Double.MAX_VALUE }
+                         else items.sortedBy { it.lastPrice.takeIf { p -> p > 0 } ?: Double.MAX_VALUE }
+            col.addView(label("Linkler (${items.size})", 15f, ink, true).apply { setPadding(0, dp(22), 0, 0) })
+            col.addView(label(if (byUnit) "Paketler farklı, adet fiyatına göre ucuzdan pahalıya" else "Ucuzdan pahalıya", 12f, muted)
+                .apply { setPadding(0, dp(2), 0, dp(8)) })
+            sorted.forEachIndexed { i, x ->
+                val u = units[x.id]
+                val cur = x.id == a.id
                 col.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(12), 0, dp(12))
-                    // Dokununca o sitedeki ürün sayfası açılır; uzun basınca bu sayfada o ilana geçilir
-                    setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(x.link))) } catch (e: Exception) {} }
+                    background = rounded(if (i == 0) greenBg else surface, 14, if (i == 0) gold else line, if (i == 0) 2 else 1)
+                    setPadding(dp(10), dp(10), dp(12), dp(10))
+                    setOnClickListener { alarmPage(gid, x.id) }
                     setOnLongClickListener {
                         AlertDialog.Builder(this@MainActivity).setTitle("${x.site} linki")
-                            .setItems(arrayOf("Bu linkin ayrıntısına geç", "Bu linki karttan çıkar")) { _, w ->
-                                if (w == 0) alarmPage(gid, x.id)
+                            .setItems(arrayOf("Sitede aç", "Bu linki karttan çıkar")) { _, w ->
+                                if (w == 0) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(x.link))) } catch (e: Exception) {} }
                                 else {
                                     Alarms.remove(this@MainActivity, x.id)
                                     val rest = Alarms.load(this@MainActivity).filter { it.groupId == gid }
@@ -4055,19 +4066,39 @@ class MainActivity : Activity(), MatchLogic {
                             }.show()
                         true
                     }
-                    addView(label("● ", 12f, siteColors[x.site] ?: muted))
-                    addView(label(x.site + if (x.seller.isNotEmpty()) " · ${x.seller}" else "", 14f, if (x.id == a.id) gold else ink, x.id == a.id).apply {
-                        maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                    addView(ImageView(this@MainActivity).apply {
+                        background = rounded(Color.WHITE, 8)
+                        setPadding(dp(2), dp(2), dp(2), dp(2))
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        if (x.image.isNotEmpty()) loadImage(x.image, this, Uri.parse(x.link).let { uu -> "${uu.scheme}://${uu.host}/" })
+                    }, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginEnd = dp(10) })
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(label(x.title, 13f, ink, cur).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+                        addView(LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(5), 0, 0)
+                            addView(pill(x.site, Color.WHITE, siteColors[x.site] ?: muted, bold = true))
+                            if (u != null) addView(pill(amountText(u.third, u.second), ink, greyBg, bold = true).apply {
+                                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) }
+                            })
+                            if (i == 0) addView(label("  en uygun", 11f, green, true))
+                        })
+                        if (x.seller.isNotEmpty()) addView(label("Satıcı: ${x.seller}", 11f, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(3), 0, 0) })
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         gravity = Gravity.END
-                        addView(label(Alarms.metric(x)?.let { if (unit) Alarms.unitText(it, x.unitName) else money(it) } ?: "?", 14f, ink, true).apply { gravity = Gravity.END })
-                        if (!unit) listingUnitText(x)?.let { addView(label(it.substringBefore(" ·"), 11f, muted).apply { gravity = Gravity.END }) }
+                        setPadding(dp(8), 0, 0, 0)
+                        addView(label(if (x.lastPrice > 0) money(x.lastPrice) else "?", 15f, if (i == 0) green else ink, true).apply { gravity = Gravity.END })
+                        if (u != null) addView(label(Alarms.unitText(u.first, u.second), 11f, if (byUnit) ink else muted, byUnit).apply { gravity = Gravity.END })
                     })
-                })
-                col.addView(View(this).apply { setBackgroundColor(line) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
             }
+            col.addView(label("Dokun: bu linke geç · uzun bas: sitede aç ya da karttan çıkar", 11f, muted).apply {
+                gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         resultsScroll.post { resultsScroll.scrollTo(0, 0) }
     }
@@ -4526,6 +4557,18 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     /** İlanın birim bölümü: birim fiyat = fiyat / bölüm ("216 adet" -> 216, "200 g" -> 0,2 kg) */
+    /** Kayıtlı ilanın paketi: (birim fiyat, birim, paket miktarı); adı miktar yazmıyorsa null */
+    private fun listingUnit(a: Alarm, price: Double = a.lastPrice): Triple<Double, String, Double>? {
+        if (price <= 0) return null
+        if (a.unitAmount > 0) return Triple(price / a.unitAmount, a.unitName, a.unitAmount)
+        val u = try { offerUnit(Offer(a.site, a.title, price, 0.0, false, "", "", a.link, a.title)) } catch (e: Exception) { null } ?: return null
+        if (u.first <= 1) return null
+        return Triple(price / u.first, u.second, u.first)
+    }
+
+    private fun amountText(amount: Double, unit: String) =
+        if (unit == "adet") "${amount.toInt()} adet" else "${Alarms.unitText(amount, "").substringBefore(" TL")} $unit"
+
     /** Kayıtlı ilanın birim fiyatı: adet / kg / L başı. Adı paket miktarı yazmıyorsa null */
     private fun listingUnitText(a: Alarm, price: Double = a.lastPrice): String? {
         if (price <= 0) return null

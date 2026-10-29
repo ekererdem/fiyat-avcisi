@@ -1433,8 +1433,9 @@ class MainActivity : Activity(), MatchLogic {
         val newest = all.maxOfOrNull { it.lastCheck } ?: 0L
 
         // Başlık
-        results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Sadece takip"; else -> "Takip listem" }, 26f, ink, true).apply {
-            typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
+        results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Sadece takip"; else -> "Takip listem" }, 26f, ink).apply {
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            letterSpacing = -0.01f
             setPadding(dp(4), dp(16), dp(4), 0)
         })
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
@@ -1446,33 +1447,29 @@ class MainActivity : Activity(), MatchLogic {
                 (if (homeChecking) " · fiyatlar kontrol ediliyor…" else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
         }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)) })
 
-        // Düğmeler: link yapıştır, barkod okut, yenile
+        // Düğmeler: barkod (yuvarlak), link yapıştır, yenile
         val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, dp(2), dp(10)) }
-        btns.addView(label("+  Link yapıştır", 14f, accentOn, true).apply {
-            gravity = Gravity.CENTER
-            background = rounded(gold, 22)
-            setPadding(dp(10), dp(11), dp(10), dp(11))
-            setOnClickListener { pasteLink() }
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        btns.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            background = rounded(surface, 22, line)
-            setPadding(dp(10), dp(9), dp(10), dp(9))
+        btns.addView(FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(gold) }
+            contentDescription = "Barkod okut"
             setOnClickListener { scanBarcode() }
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_barcode)
-                imageTintList = android.content.res.ColorStateList.valueOf(ink)
-            }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
-            addView(label("Barkod okut", 14f, ink, true))
+                imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
+            }, FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER })
+        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(10) })
+        btns.addView(label("+  Link yapıştır", 14f, ink, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(surface, 24, line)
+            setPadding(dp(10), dp(13), dp(10), dp(13))
+            setOnClickListener { pasteLink() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (list.isNotEmpty()) btns.addView(label(if (homeChecking) "…" else "↻", 20f, ink, true).apply {
             gravity = Gravity.CENTER
             contentDescription = "Fiyatları yenile"
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(surface); setStroke(dp(1), line) }
             setOnClickListener { refreshList() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
-
+        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(10) })
         if (homeFilter == "home") results.addView(btns)
 
         if (list.isEmpty() && homeFilter != "home") return
@@ -1606,7 +1603,7 @@ class MainActivity : Activity(), MatchLogic {
         card.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10), 0, 0)
-            addView(label("+  Başka site linki", 13f, ink, true).apply {
+            addView(label("+  Link ekle", 13f, ink, true).apply {
                 gravity = Gravity.CENTER
                 background = rounded(greyBg, 16)
                 setPadding(dp(10), dp(9), dp(10), dp(9))
@@ -4329,8 +4326,9 @@ class MainActivity : Activity(), MatchLogic {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), 0)
         }
-        head.addView(label("Profil", 26f, ink, true).apply {
-            typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
+        head.addView(label("Profil", 26f, ink).apply {
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            letterSpacing = -0.01f
         })
         results.addView(head)
         // Profil kartı: baş harfler, ad, e-posta, liste özeti

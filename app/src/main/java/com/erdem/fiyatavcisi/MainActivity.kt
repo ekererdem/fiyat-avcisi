@@ -1448,8 +1448,9 @@ class MainActivity : Activity(), MatchLogic {
             list.isEmpty() && homeFilter == "watch" -> "Sadece takip ettiğin ürün yok. Bir kartın zilini kapatınca burada görünür."
             list.isEmpty() -> "Almak istediğin ürünleri ekle, fiyatı düşünce haber vereyim."
             else -> "${list.size} ürün" + (if (hits > 0) " · $hits tanesi hedefte 🎯" else "") +
-                (if (homeChecking) " · fiyatlar kontrol ediliyor…" else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
-        }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)) })
+                (if (homeChecking) " · fiyatlar kontrol ediliyor…" + (refreshProg?.let { (d, t) -> " $d/$t link" } ?: "") else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
+        }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)); homeStatus = this })
+        wishCount = list.size
 
         // Arama: yazılan kelimelerin hepsi ilanda geçmeli
         if (homeFilter == "home") {
@@ -1563,7 +1564,7 @@ class MainActivity : Activity(), MatchLogic {
             maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0)
         })
         val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
-        priceRow.addView(label(e.priceText, 19f, if (e.hit || e.drop > 0) green else ink, true))
+        priceRow.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else e.priceText, 19f, if (e.hit || e.drop > 0) green else ink, true))
         if (e.drop >= 0.01) priceRow.addView(pill("↓ %${Math.round(e.drop * 100)}", green, if (e.hit) surface else greenBg, bold = true).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) }
         })
@@ -1573,7 +1574,7 @@ class MainActivity : Activity(), MatchLogic {
         if (outAll) info.addView(pill("Stokta yok", Color.WHITE, red, bold = true, size = 12f).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
         }) else if (outSome) info.addView(label("${e.items.count { it.inStock == false }} linkte stok yok", 11f, red, true).apply { setPadding(0, dp(2), 0, 0) })
-        if (a.unitTarget <= 0) listingUnitText(a)?.let { info.addView(label("📦 $it", 12f, muted, true).apply { setPadding(0, dp(2), 0, 0) }) }
+        listingUnitText(a)?.let { info.addView(label("📦 $it", 12f, if (a.unitTarget > 0) ink else muted, true).apply { setPadding(0, dp(2), 0, 0) }) }
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sağ üst: takip (dokununca takipten çıkarma sorusu) ve alarm açık/kapalı
         row.addView(FrameLayout(this).apply {
@@ -5523,15 +5524,24 @@ class MainActivity : Activity(), MatchLogic {
     }
 
     /** Düz okumayla fiyatı/adı/resmi gelmeyen kayıtları tarayıcıyla okuyup yeniden kontrol eder (bildirimler dahil) */
+    private var refreshProg: Pair<Int, Int>? = null
+    private var homeStatus: TextView? = null
+    private var wishCount = 0
+
     private fun repairEntries(then: () -> Unit) {
         val ids = Alarms.load(this).filter { Alarms.needsBrowser(it) }
-        PageReader.readAll(this, ids, attach = { attachHidden(it) }) { pre ->
+        refreshProg = 0 to ids.size
+        if (onList() && !running) showHome()
+        PageReader.readAll(this, ids, attach = { attachHidden(it) }, parallel = 3, progress = { d, t ->
+            refreshProg = d to t
+            homeStatus?.text = "${wishCount} ürün · fiyatlar kontrol ediliyor… $d/$t link"
+        }) { pre ->
             val failed = ids.map { it.id }.filter { it !in pre }.toSet()
             Thread {
                 try { if (pre.isNotEmpty()) Alarms.checkAll(applicationContext, pre.keys, pre) } catch (e: Exception) {}
                 // Tarayıcıyla okunamayanlar düz okumayla denenir
                 try { if (failed.isNotEmpty()) Alarms.checkAll(applicationContext, failed) } catch (e: Exception) {}
-                handler.post { then() }
+                handler.post { refreshProg = null; then() }
             }.start()
         }
     }

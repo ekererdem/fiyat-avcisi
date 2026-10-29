@@ -121,21 +121,30 @@ object PageReader {
                 main.removeCallbacks(poll); main.postDelayed(poll, 1200)
             }
         }
-        main.postDelayed({ finish() }, 20_000)
+        main.postDelayed({ finish() }, 14_000)
         try { wv.loadUrl(url) } catch (e: Exception) { finish() }
     }
 
     /** Kayıtları sırayla okur; okunabilenleri id → sayfa bilgisi olarak verir */
-    fun readAll(ctx: Context, items: List<Alarm>, attach: ((WebView) -> Unit)? = null, done: (Map<Long, Alarms.PageInfo>) -> Unit) {
+    /** Kayıtları aynı anda en çok [parallel] tarayıcıyla okur; her biri bitince [progress] (biten, toplam) */
+    fun readAll(ctx: Context, items: List<Alarm>, attach: ((WebView) -> Unit)? = null, parallel: Int = 3,
+                progress: ((Int, Int) -> Unit)? = null, done: (Map<Long, Alarms.PageInfo>) -> Unit) {
         val out = mutableMapOf<Long, Alarms.PageInfo>()
         val queue = items.toMutableList()
+        val total = items.size
+        var finished = 0
+        var running = 0
+        if (total == 0) { main.post { done(out) }; return }
         fun next() {
-            val a = queue.removeFirstOrNull() ?: run { done(out); return }
+            val a = queue.removeFirstOrNull() ?: run { if (running == 0) done(out); return }
+            running++
             read(ctx, a.link, attach) { info ->
                 if (info != null && (info.price != null || info.image.isNotEmpty() || !Links.looksLikeUrl(info.title))) out[a.id] = info
+                running--; finished++
+                progress?.invoke(finished, total)
                 next()
             }
         }
-        main.post { next() }
+        main.post { repeat(minOf(parallel, total)) { next() } }
     }
 }

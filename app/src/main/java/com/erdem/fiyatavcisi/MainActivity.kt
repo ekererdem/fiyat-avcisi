@@ -1500,12 +1500,6 @@ class MainActivity : Activity(), MatchLogic {
             setPadding(dp(10), dp(13), dp(10), dp(13))
             setOnClickListener { pasteLink() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (list.isNotEmpty()) btns.addView(label(if (homeChecking) "…" else "↻", 20f, ink, true).apply {
-            gravity = Gravity.CENTER
-            contentDescription = "Fiyatları yenile"
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(surface); setStroke(dp(1), line) }
-            setOnClickListener { refreshList() }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(10) })
         if (homeFilter == "home") results.addView(btns)
 
         if (list.isEmpty() && homeFilter != "home") return

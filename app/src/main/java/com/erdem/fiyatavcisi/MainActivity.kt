@@ -2167,6 +2167,8 @@ class MainActivity : Activity(), MatchLogic {
     private var pickCache: Pair<List<Offer>, List<Offer>>? = null
     private var pickButton: TextView? = null
     private var pickAll: List<Offer> = emptyList()
+    /** Süzgeçten geçip ekranda görünen ilanlar: sadece bunlardan seçili olanlar eklenir */
+    private var pickVisible: List<Offer> = emptyList()
 
     private fun pickResults(final: Boolean): Pair<List<Offer>, List<Offer>> {
         if (final) pickCache?.let { return it }
@@ -2178,7 +2180,7 @@ class MainActivity : Activity(), MatchLogic {
     /** Alttaki "Listeme ekle" düğmesini seçime göre günceller (listeyi yeniden çizmeden) */
     private fun paintPickButton() {
         val b = pickButton ?: return
-        val n = pickAll.count { offerKey(it) in barcodePicked }
+        val n = pickVisible.count { offerKey(it) in barcodePicked }
         b.text = if (n == 0) "Bir ilan seç" else "Listeme ekle ($n ilan)"
         b.setTextColor(if (n == 0) muted else accentOn)
         b.background = if (n == 0) rounded(surface, 24, line) else rounded(gold, 24)
@@ -2191,6 +2193,7 @@ class MainActivity : Activity(), MatchLogic {
         pickAll = allHits + allNear
         val hits = allHits.filter { pickPasses(it) }
         val near = allNear.filter { pickPasses(it) }
+        pickVisible = hits + near
         val filtering = pickFilter.isNotBlank() || pickSites.isNotEmpty() || pickPacks.isNotEmpty()
         if (final && filtering) col.addView(label("Süzgeç: ${hits.size + near.size}/${allHits.size + allNear.size} ilan", 12f, gold, true)
             .apply { setPadding(dp(4), dp(8), 0, 0) })
@@ -2245,13 +2248,12 @@ class MainActivity : Activity(), MatchLogic {
             selectAllRow(col, near)
             near.forEach { barcodeRow(col, it, true, missing = wordMissing(it).firstOrNull { w -> w !in genericWords }) }
         }
-        // Süzgeçle gizlenen ama seçili kalan ilanlar da eklenir
         col.addView(label("", 15f, accentOn, true).apply {
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(13), dp(16), dp(13))
             pickButton = this
             setOnClickListener {
-                val chosen = pickAll.filter { offerKey(it) in barcodePicked }
+                val chosen = pickVisible.filter { offerKey(it) in barcodePicked }
                 if (chosen.isEmpty()) return@setOnClickListener
                 val main = chosen.first()
                 alarmDialog(cleanTitle(main.title), main.link, main.site, main.image, main.price, true,

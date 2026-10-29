@@ -211,9 +211,8 @@ class MainActivity : Activity(), MatchLogic {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             navItems.add(Triple(key, iv, tv))
         }
-        item("home", R.drawable.ic_home, "Ana sayfa") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; homeFilter = "home"; goHome() }
+        item("home", R.drawable.ic_watch, "Takip listem") { if (running) { stopAll(); running = false; progress.visibility = View.GONE }; homeFilter = "home"; goHome() }
         item("alarms", R.drawable.ic_bell, "Alarmlar") { showAlarms("alarms") }
-        item("watch", R.drawable.ic_watch, "Takip") { showAlarms("watch") }
         item("profile", R.drawable.ic_person, "Profil") { showSettings() }
         updateNav()
         updateGearDot()
@@ -1434,13 +1433,13 @@ class MainActivity : Activity(), MatchLogic {
         val newest = all.maxOfOrNull { it.lastCheck } ?: 0L
 
         // Başlık
-        results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Takip"; else -> "Listem" }, 26f, ink, true).apply {
+        results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Sadece takip"; else -> "Takip listem" }, 26f, ink, true).apply {
             typeface = try { resources.getFont(R.font.outfit_black) } catch (e: Exception) { Typeface.DEFAULT_BOLD }
             setPadding(dp(4), dp(16), dp(4), 0)
         })
         val df = java.text.SimpleDateFormat("d MMM HH:mm", Locale("tr", "TR"))
         results.addView(label(when {
-            list.isEmpty() && homeFilter == "alarms" -> "Alarm kurulu ürün yok. Bir kartın zilini açınca burada görünür."
+            list.isEmpty() && homeFilter == "alarms" -> "Alarm kurulu ürün yok. Takip listende bir kartın zilini açınca burada görünür."
             list.isEmpty() && homeFilter == "watch" -> "Sadece takip ettiğin ürün yok. Bir kartın zilini kapatınca burada görünür."
             list.isEmpty() -> "Almak istediğin ürünleri ekle, fiyatı düşünce haber vereyim."
             else -> "${list.size} ürün" + (if (hits > 0) " · $hits tanesi hedefte 🎯" else "") +
@@ -1474,7 +1473,7 @@ class MainActivity : Activity(), MatchLogic {
             setOnClickListener { refreshList() }
         }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
 
-        results.addView(btns)
+        if (homeFilter == "home") results.addView(btns)
 
         if (list.isEmpty() && homeFilter != "home") return
         if (list.isEmpty()) {
@@ -1498,7 +1497,7 @@ class MainActivity : Activity(), MatchLogic {
                         addView(label(t, 14f, ink), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     })
                 }
-                addView(label("Ya da linki kopyala, yukarıdaki “Link yapıştır”a dokun. Aynı ürünün başka sitedeki linkini eklerken “Listemdeki ürüne ekle”yi seç; " +
+                addView(label("Ya da linki kopyala, yukarıdaki “Link yapıştır”a dokun. Mağazadaysan “Barkod okut” ile rafta okut. Aynı ürünün başka sitedeki linkini eklerken “Listemdeki ürüne ekle”yi seç; " +
                     "hepsi tek kartta izlenir, en ucuz site ve satıcı öne çıkar.", 12f, muted).apply { setPadding(0, dp(10), 0, 0) })
             })
             return
@@ -1728,7 +1727,7 @@ class MainActivity : Activity(), MatchLogic {
         results.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(16)) }
         results.addView(col)
-        col.addView(label("‹  Listem", 14f, gold, true).apply {
+        col.addView(label("‹  Takip listem", 14f, gold, true).apply {
             setPadding(0, dp(6), 0, dp(10))
             setOnClickListener { pickFor = null; goHome() }
         })
@@ -1967,7 +1966,7 @@ class MainActivity : Activity(), MatchLogic {
         results.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(16)) }
         results.addView(col)
-        col.addView(label("‹  Listem", 14f, gold, true).apply {
+        col.addView(label("‹  Takip listem", 14f, gold, true).apply {
             setPadding(0, dp(6), 0, dp(10))
             setOnClickListener { if (running) { stopAll(); running = false }; barcodeOnly = false; goHome() }
         })
@@ -3889,7 +3888,7 @@ class MainActivity : Activity(), MatchLogic {
         results.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(16)) }
         results.addView(col)
-        col.addView(label(if (itemBack == "home") "‹  Listem" else if (a.watch) "‹  Takip listem" else "‹  Alarmlarım", 14f, gold, true).apply {
+        col.addView(label(if (itemBack == "home") "‹  Takip listem" else if (a.watch) "‹  Takip listem" else "‹  Alarmlarım", 14f, gold, true).apply {
             setPadding(0, dp(6), 0, dp(10))
             setOnClickListener { itemGoBack() }
         })
@@ -4368,9 +4367,9 @@ class MainActivity : Activity(), MatchLogic {
                     addView(label("$n", 20f, ink, true).apply { gravity = Gravity.CENTER })
                     addView(label(t, 12f, muted).apply { gravity = Gravity.CENTER })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = if (mode != "watch") dp(8) else 0 })
-                stat(es.size, "ürün", "home")
+                stat(es.size, "takipte", "home")
                 stat(es.count { !it.watch }, "alarm", "alarms")
-                stat(es.count { it.watch }, "takip", "watch")
+                stat(es.count { it.watch }, "bildirimsiz", "watch")
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
 

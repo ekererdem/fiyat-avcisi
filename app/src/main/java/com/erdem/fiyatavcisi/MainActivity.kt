@@ -1368,10 +1368,7 @@ class MainActivity : Activity(), MatchLogic {
         val out = mutableListOf<WishEntry>()
         for ((gid, items) in all.filter { it.groupId != 0L }.groupBy { it.groupId }) {
             // Paketler farklıysa (35'li, 93'lü…) en uygun = adet fiyatı en düşük olan
-            val pool = items.filter { it.inStock != false }.ifEmpty { items }
-            val us = pool.mapNotNull { x -> listingUnit(x)?.let { x to it.first } }
-            val best = (if (us.size * 2 >= pool.size && us.isNotEmpty()) us.minByOrNull { it.second }?.first else null)
-                ?: Alarms.groupBest(pool) ?: pool.first()
+            val best = bestListing(items)
             val unit = best.unitTarget > 0 || best.unitAmount > 0
             val p = Alarms.metric(best)
             val fmt = { v: Double -> if (unit) Alarms.unitText(v, best.unitName) else money(v) }
@@ -5010,6 +5007,18 @@ class MainActivity : Activity(), MatchLogic {
             Regex("^\\d{1,3}(\\.\\d{3})+$").matches(t) -> t.replace(".", "").toDoubleOrNull()
             else -> t.toDoubleOrNull()
         } ?: 0.0
+    }
+
+    /**
+     * Kartın en uygun linki — ana ekran ve ürün sayfası aynı kuralı kullanır:
+     * stokta olanlar arasından; linklerin çoğunda paket miktarı varsa adet fiyatı en düşük, yoksa fiyatı en düşük.
+     */
+    private fun bestListing(items: List<Alarm>): Alarm {
+        val priced = items.filter { it.lastPrice > 0 }
+        val pool = priced.filter { it.inStock != false }.ifEmpty { priced }.ifEmpty { items }
+        val byUnit = items.size > 1 && items.count { listingUnit(it) != null } * 2 >= items.size
+        if (byUnit) pool.mapNotNull { x -> listingUnit(x)?.let { x to it.first } }.minByOrNull { it.second }?.let { return it.first }
+        return pool.minByOrNull { if (it.lastPrice > 0) it.lastPrice else Double.MAX_VALUE } ?: items.first()
     }
 
     /** Kayıtlı ilanın paketi: (birim fiyat, birim, paket miktarı); adı miktar yazmıyorsa null */

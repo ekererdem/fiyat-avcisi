@@ -136,9 +136,8 @@ object Alarms {
 
     /** Gruptaki en uygun ilan; diğerlerinin yarısından ucuz görünen (yanlış okunmuş) ilan sayılmaz */
     fun groupBest(items: List<Alarm>): Alarm? {
-        val ms = items.mapNotNull { metric(it) }.sorted()
-        val med = if (ms.isEmpty()) 0.0 else ms[ms.size / 2]
-        return items.filter { metric(it) != null && (ms.size < 3 || metric(it)!! >= med * 0.5) }.minByOrNull { metric(it)!! }
+        val ok = items.filter { metric(it) != null }
+        return ok.filter { it.inStock != false }.ifEmpty { ok }.minByOrNull { metric(it)!! }
     }
 
     fun unitText(v: Double, unit: String) = "${tl.format(v)} TL/$unit"

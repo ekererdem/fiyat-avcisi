@@ -1527,117 +1527,97 @@ class MainActivity : Activity(), MatchLogic {
             return
         }
 
-        list.forEach { wishCard(it) }
+        val listBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(surface, 18, line)
+            clipToOutline = true
+        }
+        list.forEachIndexed { i, e -> wishRow(listBox, e, i == list.size - 1) }
+        results.addView(listBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(2), dp(4), dp(2), 0) })
+        results.addView(label("Dokun: ayrıntı · uzun bas: listeden çıkar · zil: alarm", 11f, muted).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // Fiyatlar 2 saatten eskiyse sayfa açılınca sessizce yenilenir
         if (!homeChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) refreshList()
     }
 
     /** Bir ürün kartı: fotoğraf, ad, güncel fiyat, düşüş, hedef durumu, küçük grafik */
-    private fun wishCard(e: WishEntry) {
+    /** Sıkı liste satırı: fotoğraf · ad + durum · fiyat · zil. Dokununca ürün sayfası, uzun basınca sil. */
+    private fun wishRow(box: LinearLayout, e: WishEntry, last: Boolean) {
         val a = e.focus
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(if (e.hit) greenBg else surface, 18, if (e.hit) gold else line, if (e.hit) 2 else 1)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+        val unitMode = a.unitTarget > 0
+        val unitTxt = listingUnit(a)?.let { Alarms.unitText(it.first, it.second) }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(11), dp(8), dp(11))
+            if (e.hit) setBackgroundColor(greenBg)
             setOnClickListener { itemBack = homeFilter; alarmPage(e.gid, a.id) }
-        }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(ImageView(this).apply {
-            background = rounded(Color.WHITE, 12)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
-        }, LinearLayout.LayoutParams(dp(76), dp(76)).apply { marginEnd = dp(12) })
-        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        info.addView(label(e.title, 14f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
-        info.addView(label(e.sub, 12f, muted).apply {
-            maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0)
-        })
-        val priceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
-        priceRow.addView(label(if (a.lastPrice > 0) money(a.lastPrice) else e.priceText, 19f, if (e.hit || e.drop > 0) green else ink, true))
-        if (e.drop >= 0.01) priceRow.addView(pill("↓ %${Math.round(e.drop * 100)}", green, if (e.hit) surface else greenBg, bold = true).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) }
-        })
-        info.addView(priceRow)
-        val outAll = e.items.all { it.inStock == false }
-        val outSome = e.items.size > 1 && !outAll && e.items.any { it.inStock == false }
-        if (outAll) info.addView(pill("Stokta yok", Color.WHITE, red, bold = true, size = 12f).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
-        }) else if (outSome) info.addView(label("${e.items.count { it.inStock == false }} linkte stok yok", 11f, red, true).apply { setPadding(0, dp(2), 0, 0) })
-        listingUnitText(a)?.let { info.addView(label("📦 $it", 12f, if (a.unitTarget > 0) ink else muted, true).apply { setPadding(0, dp(2), 0, 0) }) }
-        row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        // Sağ üst: takip (dokununca takipten çıkarma sorusu) ve alarm açık/kapalı
-        row.addView(FrameLayout(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(greyBg) }
-            contentDescription = "Listeden çıkar"
-            setOnClickListener {
+            setOnLongClickListener {
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle("Listeden çıkarılsın mı?")
-                    .setMessage("“${e.title.take(60)}” listenden silinecek; fiyat geçmişi de izlenmeyecek. Emin misin?")
+                    .setMessage("“${e.title.take(60)}” listenden silinecek.")
                     .setPositiveButton("Evet, çıkar") { _, _ ->
                         if (e.gid != 0L) Alarms.removeGroup(this@MainActivity, e.gid) else Alarms.remove(this@MainActivity, a.id)
                         Toast.makeText(this@MainActivity, "Listeden çıkarıldı", Toast.LENGTH_SHORT).show()
                         showHome()
-                    }
-                    .setNegativeButton("Vazgeç", null).show()
+                    }.setNegativeButton("Vazgeç", null).show()
+                true
             }
-            addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.drawable.ic_trash)
-                imageTintList = android.content.res.ColorStateList.valueOf(muted)
-            }, FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER })
-        }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8) })
+        }
+        row.addView(ImageView(this).apply {
+            background = rounded(Color.WHITE, 10)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
+        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(12) })
+        // Orta: ad ve tek satır durum
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(label(e.title, 14f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        val out = e.items.count { it.inStock == false }
+        val p = e.price
+        val parts = mutableListOf<Pair<String, Int>>()
+        when {
+            e.hit -> parts.add("🎯 Hedefte" to green)
+            !e.watch && e.target > 0 && p != null -> parts.add("Hedefe ${if (unitMode) Alarms.unitText(p - e.target, a.unitName) else money(p - e.target)}" to ink)
+        }
+        parts.add(a.site to muted)
+        if (out > 0) parts.add((if (e.items.size == 1) "stokta yok" else "$out stok yok") to red)
+        val sub = android.text.SpannableStringBuilder()
+        parts.forEachIndexed { i, (t, c) ->
+            if (i > 0) sub.append(" · ")
+            val st = sub.length; sub.append(t)
+            sub.setSpan(android.text.style.ForegroundColorSpan(c), st, sub.length, 0)
+        }
+        mid.addView(TextView(this).apply {
+            text = sub; textSize = 12f; setTextColor(muted); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(3), 0, 0)
+        })
+        row.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // Sağ: fiyat, altında düşüş ya da toplam
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END; setPadding(dp(8), 0, dp(4), 0) }
+        val big = if (unitMode && unitTxt != null) unitTxt.replace(" TL/adet", "/adet") else if (a.lastPrice > 0) money(a.lastPrice) else "?"
+        right.addView(label(big, 15f, if (e.hit || e.drop > 0) green else ink, true).apply { gravity = Gravity.END })
+        right.addView(label(when {
+            unitMode && a.lastPrice > 0 -> money(a.lastPrice)
+            e.drop >= 0.01 -> "↓ %${Math.round(e.drop * 100)}"
+            unitTxt != null -> unitTxt
+            else -> ""
+        }, 11f, if (!unitMode && e.drop >= 0.01) green else muted, !unitMode && e.drop >= 0.01).apply { gravity = Gravity.END })
+        row.addView(right)
+        // Zil: alarm aç/kapat
         row.addView(FrameLayout(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (e.watch) greyBg else gold) }
             contentDescription = if (e.watch) "Alarmı aç" else "Alarmı kapat"
             setOnClickListener { toggleAlarm(e) }
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(if (e.watch) R.drawable.ic_bell_off else R.drawable.ic_bell)
-                imageTintList = android.content.res.ColorStateList.valueOf(if (e.watch) muted else accentOn)
-            }, FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER })
-        }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8) })
-        card.addView(row)
-
-        // Hedef durumu
-        val p = e.price
-        val statusText: String
-        val statusColor: Int
-        when {
-            e.watch -> { statusText = "Sadece izleniyor · bildirim yok"; statusColor = muted }
-            e.hit -> { statusText = "Hedefin ${e.targetText} · fiyat hedefte, alma zamanı! 🎯"; statusColor = green }
-            e.target > 0 && p != null -> {
-                val left = p - e.target
-                val fmtLeft = if (a.unitTarget > 0) Alarms.unitText(left, a.unitName) else money(left)
-                statusText = "Hedef ${e.targetText} · $fmtLeft kaldı"; statusColor = ink
-            }
-            else -> { statusText = "Her ucuzlamada haber verilecek"; statusColor = muted }
-        }
-        card.addView(label(statusText, 13f, statusColor, e.hit).apply { setPadding(dp(2), dp(10), dp(2), 0) })
-        // Fiyat geçmişi: tek satır özet (grafik ürün sayfasında)
-        if (e.history.size >= 2 && e.lowest > 0) {
-            val fmt = { v: Double -> if (a.unitTarget > 0) Alarms.unitText(v, a.unitName) else money(v) }
-            val days = (History.today() - e.history.first().first + 1).toInt()
-            card.addView(label("Son $days günün en düşüğü: ${fmt(e.lowest)}", 12f, muted).apply { setPadding(dp(2), dp(4), dp(2), 0) })
-        }
-        // Alt düğmeler: başka site linki ekle, siteye git
-        card.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
-            addView(label("+  Link ekle", 13f, ink, true).apply {
-                gravity = Gravity.CENTER
-                background = rounded(greyBg, 16)
-                setPadding(dp(10), dp(9), dp(10), dp(9))
-                setOnClickListener { attachFromClipboard(a) }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f).apply { marginEnd = dp(8) })
-            addView(label("Siteye git ›", 13f, ink, true).apply {
-                gravity = Gravity.CENTER
-                background = rounded(greyBg, 16)
-                setPadding(dp(10), dp(9), dp(10), dp(9))
-                setOnClickListener { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.link))) } catch (x: Exception) {} }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        })
-        results.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(dp(2), dp(5), dp(2), dp(5)) })
+                imageTintList = android.content.res.ColorStateList.valueOf(if (e.watch) muted else gold)
+            }, FrameLayout.LayoutParams(dp(18), dp(18)).apply { gravity = Gravity.CENTER })
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        box.addView(row)
+        if (!last) box.addView(View(this).apply { setBackgroundColor(line) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { marginStart = dp(72) })
     }
 
     /** Paylaşılan/yapıştırılan linkten yeni ilan kaydı (gruba eklenmeden önce) */

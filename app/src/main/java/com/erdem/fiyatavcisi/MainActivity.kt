@@ -4341,21 +4341,61 @@ class MainActivity : Activity(), MatchLogic {
         act(R.drawable.ic_share, "Link ekle", false) { attachFromClipboard(a) }
         col.addView(acts)
 
-        // Fiyat geçmişi: veri yoksa tek satır
-        fun historyBlock(title: String, pts: List<Pair<Long, Double>>, fmt: (Double) -> String) {
-            col.addView(label(title, 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(6)) })
-            col.addView(Sparkline(this, pts, green, line), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
-            val days = (History.today() - pts.first().first + 1).toInt()
-            col.addView(label("Son $days gün · en düşük ${fmt(pts.minOf { it.second })} · en yüksek ${fmt(pts.maxOf { it.second })}", 12f, muted)
-                .apply { setPadding(0, dp(4), 0, 0) })
-        }
-        val gh = if (gid != 0L) History.get(this, "g:$gid") else emptyList()
-        val oh = History.offer(this, a.link)
-        if (gh.size >= 2) historyBlock("Ürünün en uygun fiyatı", gh) { v -> if (a.unitAmount > 0) Alarms.unitText(v, a.unitName) else money(v) }
-        if (oh.size >= 2) historyBlock(if (gid != 0L) "Bu linkin fiyatı (${a.site})" else "Fiyat geçmişi", oh) { money(it) }
-        if (gh.size < 2 && oh.size < 2) {
-            col.addView(label("Fiyat geçmişi", 15f, ink, true).apply { setPadding(0, dp(20), 0, dp(4)) })
-            col.addView(label("Grafik ikinci günden sonra çıkar.", 13f, muted))
+        // Fiyat geçmişi: üç kutu (şimdi / en düşük / en yüksek) + gün gün liste
+        run {
+            val unitHist = gid != 0L && (a.unitTarget > 0 || a.unitAmount > 0)
+            val fmt = { v: Double -> if (unitHist) Alarms.unitText(v, a.unitName) else money(v) }
+            val gh = if (gid != 0L) History.get(this, "g:$gid") else emptyList()
+            val pts = if (gh.isNotEmpty()) gh else History.offer(this, a.link)
+            col.addView(label("Fiyat geçmişi", 16f, ink, true).apply { setPadding(0, dp(24), 0, dp(10)) })
+            if (pts.isEmpty()) {
+                col.addView(label("Fiyat her kontrolde kaydediliyor; yarından itibaren burada görünecek.", 13f, muted))
+                return@run
+            }
+            val now = pts.last().second
+            val low = pts.minOf { it.second }
+            val high = pts.maxOf { it.second }
+            val tiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf(Triple("Şimdi", now, ink), Triple("En düşük", low, green), Triple("En yüksek", high, ink)).forEachIndexed { i, (t, v, c) ->
+                tiles.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(surface, 14, line)
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    addView(label(t, 12f, muted))
+                    addView(label(fmt(v), 15f, c, true).apply { setPadding(0, dp(2), 0, 0) })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i < 2) marginEnd = dp(8) })
+            }
+            col.addView(tiles)
+            // Gün gün: en yeni üstte, en çok 10 gün; değişim oku
+            val df = java.text.SimpleDateFormat("d MMMM EEE", Locale("tr", "TR"))
+            val days = pts.takeLast(10).reversed()
+            val listBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(surface, 14, line)
+                setPadding(dp(12), dp(4), dp(12), dp(4))
+            }
+            days.forEachIndexed { i, (d, v) ->
+                val prev = days.getOrNull(i + 1)?.second
+                listBox.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(9), 0, dp(9))
+                    addView(label(if (d == History.today()) "Bugün" else df.format(java.util.Date(d * 86_400_000L)), 13f, if (i == 0) ink else muted, i == 0),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    when {
+                        prev == null -> {}
+                        v < prev - 0.005 -> addView(label("↓ ${fmt(prev - v)}  ", 12f, green, true))
+                        v > prev + 0.005 -> addView(label("↑ ${fmt(v - prev)}  ", 12f, red, true))
+                        else -> addView(label("aynı  ", 12f, muted))
+                    }
+                    addView(label(fmt(v), 14f, if (v == low) green else ink, true))
+                })
+                if (i < days.size - 1) listBox.addView(View(this).apply { setBackgroundColor(line) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+            }
+            col.addView(listBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            col.addView(label(if (gh.isNotEmpty()) "Her gün, o günün en uygun linkinin fiyatı" else "Her gün, o günün en düşük fiyatı", 11f, muted)
+                .apply { setPadding(dp(4), dp(6), 0, 0) })
         }
 
         // Karttaki bütün linkler: paket farklıysa adet fiyatına göre sıralı

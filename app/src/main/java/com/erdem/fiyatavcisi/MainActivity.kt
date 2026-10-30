@@ -1613,23 +1613,11 @@ class MainActivity : Activity(), MatchLogic {
             else -> { statusText = "Her ucuzlamada haber verilecek"; statusColor = muted }
         }
         card.addView(label(statusText, 13f, statusColor, e.hit).apply { setPadding(dp(2), dp(10), dp(2), 0) })
-        // Hedefe ilerleme çubuğu: eklendiği fiyattan hedefe ne kadar yol alındı
-        if (!e.watch && !e.hit && e.target > 0 && p != null && e.start > e.target) {
-            val f = ((e.start - p) / (e.start - e.target)).coerceIn(0.0, 1.0).toFloat()
-            card.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                background = rounded(greyBg, 4)
-                addView(View(this@MainActivity).apply { background = rounded(gold, 4) },
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, f.coerceAtLeast(0.02f)))
-                addView(View(this@MainActivity), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f - f.coerceAtLeast(0.02f)))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply { setMargins(dp(2), dp(8), dp(2), 0) })
-        }
-        // Küçük fiyat grafiği
-        if (e.history.size >= 2) {
-            card.addView(Sparkline(this, e.history, green, line), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(8) })
-            if (e.lowest > 0) card.addView(label("En düşük ${if (a.unitTarget > 0) Alarms.unitText(e.lowest, a.unitName) else money(e.lowest)} · ${e.history.size} gündür izleniyor", 11f, muted)
-                .apply { setPadding(dp(2), dp(2), dp(2), 0) })
+        // Fiyat geçmişi: tek satır özet (grafik ürün sayfasında)
+        if (e.history.size >= 2 && e.lowest > 0) {
+            val fmt = { v: Double -> if (a.unitTarget > 0) Alarms.unitText(v, a.unitName) else money(v) }
+            val days = (History.today() - e.history.first().first + 1).toInt()
+            card.addView(label("Son $days günün en düşüğü: ${fmt(e.lowest)}", 12f, muted).apply { setPadding(dp(2), dp(4), dp(2), 0) })
         }
         // Alt düğmeler: başka site linki ekle, siteye git
         card.addView(LinearLayout(this).apply {

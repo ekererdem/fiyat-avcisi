@@ -314,13 +314,16 @@ object Alarms {
                     // Ürün alarmındaki ilanlar tek tek bildirim göndermez; grup olarak aşağıda değerlendirilir
                     if (a.groupId == 0L && !a.watch && ((anyDrop && dropped) || hitTarget)) {
                         val unitNow = a.unitPrice(p)
-                        notify(ctx, a, "Fiyat düştü: ${money(p)}" + (unitNow?.let { " (${unitText(it, a.unitName)})" } ?: ""),
-                            "${a.title.take(60)} · ${a.site} · önce ${money(a.lastPrice)}" +
+                        val save = a.lastPrice - p
+                        notify(ctx, a, if (hitTarget) "🎯 İzci yakaladı! Hedef fiyatın geldi" else "🔍 İzci yakaladı! Fiyat düştü",
+                            "${shortName(a.title)} şimdi ${a.site}'da ${money(p)}" +
+                                (unitNow?.let { " (${unitText(it, a.unitName)})" } ?: "") + "." +
+                                (if (save >= 1) " Öncekinden ${money(save)} ucuz." else "") +
                                 when {
-                                    a.unitTarget > 0 -> " · hedefin ${unitText(a.unitTarget, a.unitName)}"
-                                    a.target > 0 -> " · hedefin ${money(a.target)}"
+                                    a.unitTarget > 0 -> " Hedefin ${unitText(a.unitTarget, a.unitName)} idi."
+                                    a.target > 0 -> " Hedefin ${money(a.target)} idi."
                                     else -> ""
-                                })
+                                } + " Kaçırmadan bak 👀")
                         notified++
                     }
                     a.lastPrice = p
@@ -328,7 +331,8 @@ object Alarms {
                     History.recordOffer(ctx, a.link, p)
                 }
                 if (a.wantStock && !a.watch && r.inStock == true && a.inStock == false) {
-                    notify(ctx, a, "Stoğa girdi" + (p?.let { ": ${money(it)}" } ?: ""), "${a.title.take(70)} · ${a.site}")
+                    notify(ctx, a, "📦 İzci yakaladı! Stoğa geri geldi",
+                        "${shortName(a.title)} ${a.site}'da yeniden stokta" + (p?.let { ", fiyatı ${money(it)}" } ?: "") + ". Tükenmeden bak 👀")
                     notified++
                 }
                 if (r.inStock != null) a.inStock = r.inStock
@@ -350,10 +354,13 @@ object Alarms {
             val fmt = { v: Double -> if (unit) unitText(v, best.unitName) else money(v) }
             val hit = if (target > 0) m <= target && (prev <= 0 || prev > target) else prev > 0 && m < prev * 0.995
             if (hit && !items.first().watch) {
-                notify(ctx, best, "${best.site}'da ${fmt(m)}",
-                    "${best.groupName.ifEmpty { best.title }.take(60)} · ${money(best.lastPrice)}" +
-                        (if (prev > 0) " · önceki en iyi ${fmt(prev)}" else "") +
-                        (if (target > 0) " · hedefin ${fmt(target)}" else ""))
+                val name = shortName(best.groupName.ifEmpty { best.title })
+                notify(ctx, best, if (target > 0) "🎯 İzci yakaladı! Hedef fiyatın geldi" else "🔍 İzci yakaladı! Daha ucuzunu buldu",
+                    "$name en uygun ${best.site}'da: ${money(best.lastPrice)}" +
+                        (if (unit) " (${fmt(m)})" else "") + "." +
+                        (if (prev > 0 && prev > m) " Önceki en iyi fiyat ${fmt(prev)} idi." else "") +
+                        (if (target > 0) " Hedefin ${fmt(target)}." else "") +
+                        (if (items.size > 1) " ${items.size} link arasından seçtim." else "") + " Kaçırmadan bak 👀")
                 notified++
             }
             prefs(ctx).edit().putFloat(key, m.toFloat()).apply()
@@ -374,13 +381,20 @@ object Alarms {
         }
     }
 
+    /** Bildirimde kısa ürün adı: ilk 6 kelime */
+    private fun shortName(t: String): String {
+        val w = t.split(Regex("\\s[-|–]\\s")).first().split(" ").filter { it.isNotBlank() }
+        return w.take(6).joinToString(" ") + if (w.size > 6) "…" else ""
+    }
+
     private fun notify(ctx: Context, a: Alarm, title: String, text: String) {
         ensureChannel(ctx)
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         val pi = PendingIntent.getActivity(ctx, a.id.toInt(),
             Intent(Intent.ACTION_VIEW, Uri.parse(a.link)), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(ctx, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notify)
+            .setColor(0xFF3DDC97.toInt())
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))

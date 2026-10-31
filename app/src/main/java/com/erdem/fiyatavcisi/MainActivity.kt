@@ -1551,7 +1551,7 @@ class MainActivity : Activity(), MatchLogic {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(11), dp(8), dp(11))
+            setPadding(dp(14), dp(16), dp(8), dp(16))
             if (e.hit) setBackgroundColor(greenBg)
             setOnClickListener { itemBack = homeFilter; alarmPage(e.gid, a.id) }
             setOnLongClickListener {
@@ -1567,14 +1567,14 @@ class MainActivity : Activity(), MatchLogic {
             }
         }
         row.addView(ImageView(this).apply {
-            background = rounded(Color.WHITE, 10)
-            setPadding(dp(3), dp(3), dp(3), dp(3))
+            background = rounded(Color.WHITE, 12)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             scaleType = ImageView.ScaleType.FIT_CENTER
             if (a.image.isNotEmpty()) loadImage(a.image, this, Uri.parse(a.link).let { u -> "${u.scheme}://${u.host}/" })
-        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(12) })
+        }, LinearLayout.LayoutParams(dp(68), dp(68)).apply { marginEnd = dp(14) })
         // Orta: ad ve tek satır durum
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        mid.addView(label(e.title, 14f, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        mid.addView(label(e.title, 15f, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
         val out = e.items.count { it.inStock == false }
         val p = e.price
         val parts = mutableListOf<Pair<String, Int>>()
@@ -1591,20 +1591,20 @@ class MainActivity : Activity(), MatchLogic {
             sub.setSpan(android.text.style.ForegroundColorSpan(c), st, sub.length, 0)
         }
         mid.addView(TextView(this).apply {
-            text = sub; textSize = 12f; setTextColor(muted); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, dp(3), 0, 0)
+            text = sub; textSize = 13f; setTextColor(muted); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(5), 0, 0)
         })
         row.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // Sağ: fiyat, altında düşüş ya da toplam
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END; setPadding(dp(8), 0, dp(4), 0) }
         val big = if (unitMode && unitTxt != null) unitTxt.replace(" TL/adet", "/adet") else if (a.lastPrice > 0) money(a.lastPrice) else "?"
-        right.addView(label(big, 15f, if (e.hit || e.drop > 0) green else ink, true).apply { gravity = Gravity.END })
+        right.addView(label(big, 18f, if (e.hit || e.drop > 0) green else ink, true).apply { gravity = Gravity.END })
         right.addView(label(when {
             unitMode && a.lastPrice > 0 -> money(a.lastPrice)
             e.drop >= 0.01 -> "↓ %${Math.round(e.drop * 100)}"
             unitTxt != null -> unitTxt
             else -> ""
-        }, 11f, if (!unitMode && e.drop >= 0.01) green else muted, !unitMode && e.drop >= 0.01).apply { gravity = Gravity.END })
+        }, 12f, if (!unitMode && e.drop >= 0.01) green else muted, !unitMode && e.drop >= 0.01).apply { gravity = Gravity.END })
         row.addView(right)
         // Zil: alarm aç/kapat
         row.addView(FrameLayout(this).apply {
@@ -1613,11 +1613,11 @@ class MainActivity : Activity(), MatchLogic {
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(if (e.watch) R.drawable.ic_bell_off else R.drawable.ic_bell)
                 imageTintList = android.content.res.ColorStateList.valueOf(if (e.watch) muted else gold)
-            }, FrameLayout.LayoutParams(dp(18), dp(18)).apply { gravity = Gravity.CENTER })
-        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+            }, FrameLayout.LayoutParams(dp(22), dp(22)).apply { gravity = Gravity.CENTER })
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
         box.addView(row)
         if (!last) box.addView(View(this).apply { setBackgroundColor(line) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { marginStart = dp(72) })
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { marginStart = dp(96) })
     }
 
     /** Paylaşılan/yapıştırılan linkten yeni ilan kaydı (gruba eklenmeden önce) */

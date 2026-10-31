@@ -1434,6 +1434,9 @@ class MainActivity : Activity(), MatchLogic {
         val newest = all.maxOfOrNull { it.lastCheck } ?: 0L
 
         // Başlık
+        // Ana sayfada başlık ve "son kontrol" satırı yok; Alarmlar sekmesinde başlık kalır
+        homeStatus = null
+        if (homeFilter != "home") {
         results.addView(label(when (homeFilter) { "alarms" -> "Alarmlar"; "watch" -> "Sadece takip"; else -> "İzci listem" }, 26f, ink).apply {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             letterSpacing = -0.01f
@@ -1447,6 +1450,7 @@ class MainActivity : Activity(), MatchLogic {
             else -> "${list.size} ürün" + (if (hits > 0) " · $hits tanesi hedefte 🎯" else "") +
                 (if (homeChecking) " · fiyatlar kontrol ediliyor…" + (refreshProg?.let { (d, t) -> " $d/$t link" } ?: "") else if (newest > 0) " · son kontrol ${df.format(java.util.Date(newest))}" else "")
         }, 13f, if (hits > 0) green else muted, hits > 0).apply { setPadding(dp(4), dp(4), dp(4), dp(12)); homeStatus = this })
+        }
         wishCount = list.size
 
         // Arama: yazılan kelimelerin hepsi ilanda geçmeli
@@ -1496,7 +1500,7 @@ class MainActivity : Activity(), MatchLogic {
                     imageTintList = android.content.res.ColorStateList.valueOf(accentOn)
                 }, FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER })
             }, LinearLayout.LayoutParams(dp(42), dp(42)))
-            results.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(2), 0, dp(2), dp(10)) })
+            results.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(2), dp(14), dp(2), dp(10)) })
         }
 
         if (list.isEmpty() && homeFilter != "home") return

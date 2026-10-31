@@ -1538,9 +1538,7 @@ class MainActivity : Activity(), MatchLogic {
         }
         list.forEachIndexed { i, e -> wishRow(listBox, e, i == list.size - 1) }
         results.addView(listBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(2), dp(4), dp(2), 0) })
-        results.addView(label("Dokun: ayrıntı · uzun bas: listeden çıkar · zil: alarm", 11f, muted).apply {
-            gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
 
         // Fiyatlar 2 saatten eskiyse sayfa açılınca sessizce yenilenir
         if (!homeChecking && System.currentTimeMillis() - newest > 2 * 3_600_000L) refreshList()

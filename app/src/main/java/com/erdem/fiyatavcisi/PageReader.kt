@@ -36,6 +36,26 @@ object PageReader {
               for(var f=0;f<of.length;f++){var x=of[f];if(!x)continue;var pv=num(x.price||x.lowPrice);
                 if(pv&&price==null)price=pv;if(x.availability)stock=/InStock|LimitedAvailability/.test(x.availability);}
             }}catch(e){}}
+          var amz=/amazon\./.test(location.hostname);
+          if(amz){
+            // Amazon: sadece ürünün kendi fiyat kutusu; "alternatif ürünler" vb. karuseller okunmaz
+            price=null;
+            function okEl(e){return e&&!e.closest('.a-text-price,.a-carousel,[data-a-carousel-options],[id^="sims"],[id*="p13n"],[id^="sp_detail"]');}
+            var bb=['#corePrice_feature_div .priceToPay .a-offscreen','#corePriceDisplay_desktop_feature_div .priceToPay .a-offscreen',
+              '#corePrice_mobile_feature_div .priceToPay .a-offscreen','.apexPriceToPay .a-offscreen','#apex_offerDisplay_mobile .priceToPay .a-offscreen',
+              '#corePrice_feature_div .a-price .a-offscreen','#corePrice_mobile_feature_div .a-price .a-offscreen','#apex_desktop .a-price .a-offscreen',
+              '#price_inside_buybox','#newBuyBoxPrice','#tp_price_block_total_price_ww .a-offscreen'];
+            for(var b=0;b<bb.length&&price==null;b++){var els=document.querySelectorAll(bb[b]);
+              for(var e2=0;e2<els.length&&price==null;e2++){if(okEl(els[e2]))price=num(els[e2].textContent);}}
+            if(price==null){
+              // Öne çıkan teklif yok: diğer satıcıların en ucuzu
+              var ob=document.querySelectorAll('#olp_feature_div,#olpLinkWidget_feature_div,#aod-ingress-link,#dynamic-aod-ingress-box,#mbc,#buybox-see-all-buying-choices,#all-offers-display,#aod-offer-list');
+              for(var o2=0;o2<ob.length;o2++){var tx=(ob[o2].innerText||'').replace(/\([^)]*\)/g,' ');
+                var re=/([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})\s*(?:TL|₺)/g,mm;
+                while((mm=re.exec(tx))){var v=num(mm[1]);if(v&&(price==null||v<price))price=v;}}
+            }
+            if(price==null)price=-1; // aşağıdaki genel okumalara düşmesin
+          }
           if(price==null){var a=meta('product:price:amount')||meta('og:price:amount');if(a)price=parseFloat(a)||null;}
           if(price==null){
             var sels=['.prc-dsc','.product-price-container .prc-dsc','.campaign-price','.price-view-discounted','.price-view-original',
@@ -43,6 +63,7 @@ object PageReader {
               '.product-price','#corePrice_feature_div .a-offscreen','.a-price .a-offscreen','.newPrice ins','.unf-p-summary-price'];
             for(var s2=0;s2<sels.length&&price==null;s2++){var e=document.querySelector(sels[s2]);if(e)price=num(e.textContent);}
           }
+          if(price===-1)price=null;
           // Satıcılar: sayfanın kendi verisinde (window.__…STATE__, __NEXT_DATA__) satıcı listeleri aranır
           var sellers=[],featured='';
           function sp(o){if(o==null)return null;if(typeof o=='number')return o>0?o:null;if(typeof o=='string')return num(o);
@@ -67,6 +88,7 @@ object PageReader {
             for(var q=0;q<oo.length;q++){var sl=oo[q]&&oo[q].seller;if(sl&&sl.name){featured=sl.name;break;}}}catch(e){}}}
           if(featured&&price)sellers.push({n:featured,p:price});
           // Mantıksız düşük okumalar (başka ürün, taksit) atılır: sayfa fiyatının yarısından ucuz satıcı sayılmaz
+          if(amz)sellers=[];
           var uniq={};sellers.forEach(function(s){if(price&&s.p<price*0.5)return;if(!uniq[s.n]||s.p<uniq[s.n])uniq[s.n]=s.p;});
           var bestN=featured,bestP=price,cnt=0;
           for(var nm in uniq){cnt++;if(bestP==null||uniq[nm]<bestP){bestP=uniq[nm];bestN=nm;}}

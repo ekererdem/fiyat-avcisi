@@ -182,6 +182,52 @@ object Alarms {
     private fun unescape(s: String) = s.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
         .replace("&#x27;", "'").replace("\\u0026", "&").replace("\\/", "/")
 
+    /** Amazon'da ürünün kendi fiyat kutuları (öne çıkan teklif) */
+    private val amazonBuyBox = listOf(
+        "corePrice_feature_div", "corePriceDisplay_desktop_feature_div", "corePrice_mobile_feature_div",
+        "apex_desktop", "apex_offerDisplay_desktop", "apex_offerDisplay_mobile", "apex_mobile_feature_div",
+        "price_inside_buybox", "newBuyBoxPrice", "tp_price_block_total_price_ww", "priceblock_ourprice", "priceblock_dealprice",
+    )
+    /** Öne çıkan teklif yoksa: "diğer satıcılar / tüm satın alma seçenekleri" kutuları */
+    private val amazonOffers = listOf(
+        "olp_feature_div", "olpLinkWidget_feature_div", "aod-ingress", "dynamic-aod-ingress-box", "mbc", "buybox-see-all-buying-choices",
+        "all-offers-display", "aod-offer-list",
+    )
+    private val trPrice = Regex("""([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})\s*(?:TL|₺)""")
+
+    /** Sadece belirtilen kutuların içinden (id'den sonraki kısa bölüm) fiyat okur; birim fiyat ve üstü çizili fiyat atlanır */
+    private fun pricesIn(html: String, ids: List<String>, span: Int): List<Double> {
+        val out = mutableListOf<Double>()
+        for (id in ids) {
+            for (m in Regex("""id="${Regex.escape(id)}"""").findAll(html)) {
+                var seg = html.substring(m.range.first, minOf(html.length, m.range.first + span))
+                // Kutunun içinde başka bir öneri bölümü başlıyorsa orada kes
+                Regex("""a-carousel|sims-|p13n|sp_detail|similarities|alternatif|birlikte""", RegexOption.IGNORE_CASE)
+                    .find(seg, 1)?.let { seg = seg.substring(0, it.range.first) }
+                // Üstü çizili (eski) fiyat ve birim fiyat bloklarını çıkar
+                seg = seg.replace(Regex("""<span[^>]*a-text-price[^>]*>.*?</span>\s*</span>""", RegexOption.DOT_MATCHES_ALL), " ")
+                val text = seg.replace(Regex("<[^>]+>"), " ").replace("&nbsp;", " ").replace(Regex("\\s+"), " ")
+                for (p in trPrice.findAll(text)) {
+                    val after = text.substring(p.range.last + 1, minOf(text.length, p.range.last + 40))
+                    val before = text.substring(maxOf(0, p.range.first - 3), p.range.first)
+                    if (Regex("""^\s*/\s*(?:sayım|adet|count|kg|g|lt|l|ml|100)""", RegexOption.IGNORE_CASE).containsMatchIn(after) ||
+                        before.contains("(")) continue
+                    parseNum(p.groupValues[1])?.takeIf { it > 0 }?.let { out += it }
+                }
+            }
+        }
+        return out
+    }
+
+    internal fun amazonPrice(html: String): Double? {
+        // 1) Öne çıkan teklif: ödenecek fiyat
+        Regex("""(?:priceToPay|apexPriceToPay)[\s\S]{0,300}?a-offscreen">\s*([0-9.]+,[0-9]{2})""").find(html)
+            ?.let { parseNum(it.groupValues[1]) }?.takeIf { it > 0 }?.let { return it }
+        pricesIn(html, amazonBuyBox, 5000).firstOrNull()?.let { return it }
+        // 2) "Öne çıkan teklif yok": diğer satıcıların en ucuzu
+        return pricesIn(html, amazonOffers, 4000).minOrNull()
+    }
+
     /** Ürün sayfasını indirip fiyatı, stok durumunu, adı ve resmi okur (sitelerin arama motorları için koyduğu veriden) */
     fun fetch(url: String): PageInfo {
         val c = URL(url).openConnection() as HttpURLConnection
@@ -214,13 +260,17 @@ object Alarms {
             Regex(""""priceToPay"[^<]{0,400}?a-offscreen">\s*([0-9.]+,[0-9]{2})"""),
         )
         var price: Double? = null
-        for (re in priceRes) {
+        // Amazon: sayfada "alternatif ürünler", "sık birlikte alınanlar" gibi başka ürünlerin fiyatları da var.
+        // Sadece ürünün kendi fiyat kutusu (ya da öne çıkan teklif yoksa "diğer satıcılar" kutusu) okunur.
+        val isAmazon = Regex("amazon\\.").containsMatchIn(finalUrl) || Regex("amazon\\.").containsMatchIn(url)
+        if (isAmazon) price = amazonPrice(html)
+        else for (re in priceRes) {
             val m = re.find(html) ?: continue
             val v = parseNum(m.groupValues[1])
             if (v != null && v > 0) { price = v; break }
         }
         // Amazon: sayfadaki ilk fiyat bazen "(16,13 TL / adet)" birim fiyatıdır; birim fiyatları atla
-        if (price == null) {
+        if (price == null && !isAmazon) {
             for (m in Regex("""class="a-offscreen">\s*([0-9.]+,[0-9]{2})\s*TL""").findAll(html)) {
                 val before = html.substring(maxOf(0, m.range.first - 250), m.range.first)
                 val after = html.substring(m.range.last + 1, minOf(html.length, m.range.last + 200))
